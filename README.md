@@ -248,6 +248,20 @@ allowlisted keys alone. See [`cardputer/README.md`](cardputer/README.md).
 
 🎬 [Watch it running](https://youtube.com/shorts/AlCFoE3ng9Y)
 
+### Other boards: Waveshare ESP32-S3-ePaper-1.54
+
+`epaper154/` holds a **pager** for the Waveshare ESP32-S3-ePaper-1.54 (200×200
+black-and-white e-paper, two buttons, a speaker). It does one thing: shows which
+agent is waiting, chimes the moment one blocks, and answers it with a button —
+PWR picks the session (and focuses it in Herdr), BOOT sends Enter. Same bridge,
+same pairing, same OTA; the Wi-Fi is set up from a phone through the pager's own
+access point, since it has no keyboard or touch. ESP-IDF like the panel, so it
+shares the protocol, Wi-Fi, pairing and update modules with it. See
+[`epaper154/README.md`](epaper154/README.md).
+
+| ![Someone waiting](epaper154/docs/images/tela-esperando.png) | ![All clear](epaper154/docs/images/tela-tudo-ok.png) | ![Pairing](epaper154/docs/images/tela-pareamento.png) |
+|:---:|:---:|:---:|
+
 ## Architecture
 
 Herdr exposes its API on a local unix socket, which a device on the network cannot reach.
