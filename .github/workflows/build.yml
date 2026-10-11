@@ -1,4 +1,4 @@
-# Builda os dois firmwares e roda o teste de host a cada push/PR, em jobs
+# Builda os firmwares (painel, Cardputer, e-paper) e roda o teste de host a cada push/PR, em jobs
 # paralelos. O job do Cardputer é o que torna seguro o esquema de cópia do
 # sync_shared.py: uma mudança em src/ que quebre o porte aparece aqui, no PR,
 # e não semanas depois no primeiro build local de alguém.
@@ -64,6 +64,34 @@ jobs:
       - name: Build
         run: pio run -d cardputer
 
+  epaper154:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Mesma plataforma do painel (espressif32@6.6.0), mas chave própria: o
+      # hash é do platformio.ini do device. As duas revisões da placa (V2 e
+      # V1, só muda a PSRAM) saem do mesmo job — default_envs tem as duas.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-epaper154-${{ runner.os }}-${{ hashFiles('epaper154/platformio.ini') }}
+          restore-keys: pio-epaper154-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        run: pio run -d epaper154
+
   # Só o term_parse: é C11 puro e roda em qualquer host. O discovery_test fica
   # de fora porque o backend de HMAC no host é CommonCrypto (macOS) e o cJSON
   # viria do pacote espidf — segue como teste manual (comando no cabeçalho dele).
@@ -95,6 +123,14 @@ jobs:
           cc -std=c11 -Wall -Wextra -Isrc -o /tmp/lft \
             scripts/led_fx_test.c src/led_fx.c
           /tmp/lft
+
+      - name: epaper154 pager_ui_test
+        run: |
+          cc -std=c11 -Wall -Wextra -Isrc -Iscripts/hoststub -Iepaper154/src -o /tmp/put \
+            epaper154/scripts/pager_ui_test.c epaper154/src/pager_ui.c \
+            epaper154/src/epd_fb.c epaper154/src/buttons_machine.c \
+            epaper154/src/portal_form.c
+          /tmp/put
 
       - name: bridge unit tests
         run: cd plugin && python3 -m unittest discover -s tests -v
