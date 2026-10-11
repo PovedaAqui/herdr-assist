@@ -22,8 +22,12 @@ static const char *TAG = "fw_update";
 /* URL estável: o GitHub redireciona para o asset do release mais novo, então
    uma checagem é um único GET — sem tocar na API (rate limit) nem parsear
    release notes. O manifest é publicado pelo workflow junto com os .bin. */
+/* Outros devices (epaper154/) compartilham este arquivo e definem o próprio
+   manifest por -D: o manifest.json de nome fixo é para sempre o do painel. */
+#ifndef MANIFEST_URL
 #define MANIFEST_URL \
     "https://github.com/walcew/herdr-assist/releases/latest/download/manifest.json"
+#endif
 
 /* A URL assinada do redirect (objects.githubusercontent.com/...?X-Amz-...)
    passa de 512 bytes: precisa caber no buffer de resposta (header Location)
