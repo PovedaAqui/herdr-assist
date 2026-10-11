@@ -6,7 +6,9 @@
  * S3_ePaper_1_54): mclk=14 bclk=15 ws=38 dout=45, PA=46, use_mclk=1.
  *
  * Toca numa task própria: um bipe de 2-3 tons leva ~400 ms e não pode travar
- * a UI nem os botões.
+ * a UI nem os botões. Bateria: o codec só fica aberto enquanto toca —
+ * esp_codec_dev_close desliga o PA e o canal I2S, e um I2S ligado seguraria
+ * o lock de PM e impediria o light sleep.
  *
  * PENDENTE DE BANCADA: volume (CHIME_VOL) e se o PA é ativo em nível alto
  * (pa_reverted=false, como o codec_board do vendor assume).
@@ -68,11 +70,19 @@ static void chime_task(void *arg)
         if (xQueueReceive(s_queue, &kind, portMAX_DELAY) != pdTRUE) continue;
         const float *seq = kind == CHIME_MORE ? seq_more : kind == CHIME_TEST ? seq_test : seq_blocked;
         int n = kind == CHIME_MORE ? 3 : kind == CHIME_TEST ? 1 : 2;
+        esp_codec_dev_sample_info_t fs = {
+            .sample_rate = CHIME_RATE_HZ,
+            .channel = 2,
+            .bits_per_sample = 16,
+        };
+        if (esp_codec_dev_open(s_out, &fs) != ESP_CODEC_DEV_OK) continue;
+        esp_codec_dev_set_out_vol(s_out, CHIME_VOL);
         for (int i = 0; i < n; i++) {
             synth_tone(seq[i]);
             esp_codec_dev_write(s_out, s_buf, sizeof(s_buf));
             vTaskDelay(pdMS_TO_TICKS(CHIME_GAP_MS));
         }
+        esp_codec_dev_close(s_out);
     }
 }
 
@@ -101,6 +111,9 @@ bool chime_init(void)
     };
     std.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx, &std));
+    /* MCLK correndo enquanto o ES8311 é configurado por I2C (ordem do
+     * exemplo oficial); depois o canal é desligado e quem liga/desliga é o
+     * esp_codec_dev, a cada open/close */
     ESP_ERROR_CHECK(i2s_channel_enable(tx));
 
     audio_codec_i2s_cfg_t i2s_cfg = { .port = I2S_NUM_0, .tx_handle = tx };
@@ -118,6 +131,7 @@ bool chime_init(void)
         .hw_gain = { .pa_voltage = 5.0f, .codec_dac_voltage = 3.3f },
     };
     const audio_codec_if_t *codec_if = es8311_codec_new(&es);
+    i2s_channel_disable(tx);
     if (!data_if || !ctrl_if || !gpio_if || !codec_if) {
         ESP_LOGE(TAG, "ES8311 não respondeu (I2C 0x%02X)", BOARD_ES8311_ADDR);
         return false;
@@ -128,16 +142,14 @@ bool chime_init(void)
         .data_if = data_if,
     };
     s_out = esp_codec_dev_new(&dev);
-    esp_codec_dev_sample_info_t fs = {
-        .sample_rate = CHIME_RATE_HZ,
-        .channel = 2,
-        .bits_per_sample = 16,
-    };
-    if (!s_out || esp_codec_dev_open(s_out, &fs) != ESP_CODEC_DEV_OK) {
-        ESP_LOGE(TAG, "esp_codec_dev_open falhou");
+    if (!s_out) {
+        ESP_LOGE(TAG, "esp_codec_dev_new falhou");
         return false;
     }
-    esp_codec_dev_set_out_vol(s_out, CHIME_VOL);
+    /* o es8311_codec_new deixa o PA ligado; um open/close o desliga até o
+     * primeiro bipe */
+    esp_codec_dev_sample_info_t fs = { .sample_rate = CHIME_RATE_HZ, .channel = 2, .bits_per_sample = 16 };
+    if (esp_codec_dev_open(s_out, &fs) == ESP_CODEC_DEV_OK) esp_codec_dev_close(s_out);
 
     s_queue = xQueueCreate(4, sizeof(chime_kind_t));
     xTaskCreate(chime_task, "chime", 3072, NULL, 4, NULL);

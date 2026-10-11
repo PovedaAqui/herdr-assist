@@ -18,6 +18,12 @@
  *   BOOT longo  sino mudo / ligado
  *   BOOT 3 s    instala a atualização de firmware, se houver
  *   PWR+BOOT 3s configuração do Wi-Fi (ou cancela, se já estiver nela)
+ *
+ * Bateria: o gerenciador de energia do IDF entra em light sleep sozinho
+ * entre os eventos (Wi-Fi em modem sleep segura a conexão com a ponte, então
+ * o sino continua chegando na hora). Com um PC ligado na USB o light sleep
+ * fica suspenso (CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION) para o log funcionar;
+ * num carregador de parede ele vale normalmente.
  */
 
 #include <string.h>
@@ -25,6 +31,8 @@
 #include <time.h>
 
 #include "esp_log.h"
+#include "esp_pm.h"
+#include "esp_timer.h"
 #include "esp_sleep.h"
 #include "esp_sntp.h"
 #include "esp_attr.h"
@@ -34,6 +42,7 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
+#include "battery.h"
 #include "board.h"
 #include "board_pins.h"
 #include "buttons.h"
@@ -263,18 +272,38 @@ static void ui_task(void *arg)
     int prev_waiting = 0;
     bool was_online = false, baseline_pending = true;
     uint32_t last_gen = 0;
-    int status_ttl = 0;
+    int64_t status_until = 0, next_batt = 0;
+    int low_batt = 0;
     bool rtc_saved = false;
     ui_screen_t last_screen = pager_ui_screen();
 
     for (;;) {
+        /* dorme até um botão ou 1 s: é aqui que o light sleep acontece */
         btn_evt_t e;
-        while (xQueueReceive(s_btn_q, &e, 0) == pdTRUE) {
+        bool got = xQueueReceive(s_btn_q, &e, pdMS_TO_TICKS(1000)) == pdTRUE;
+        while (got) {
             s_status[0] = '\0';
             handle_button(&e);
-            if (s_status[0]) { pager_ui_set_status(s_status); status_ttl = 20; }   /* ~5 s */
+            if (s_status[0]) {
+                pager_ui_set_status(s_status);
+                status_until = esp_timer_get_time() + 5 * 1000000LL;
+            }
+            got = xQueueReceive(s_btn_q, &e, 0) == pdTRUE;
         }
-        if (status_ttl > 0 && --status_ttl == 0) s_status[0] = '\0';
+        int64_t t_us = esp_timer_get_time();
+        if (status_until && t_us > status_until) { s_status[0] = '\0'; status_until = 0; }
+
+        if (t_us >= next_batt) {
+            next_batt = t_us + 30 * 1000000LL;
+            int mv = battery_read_mv();
+            int pct = battery_percent_from_mv(mv);
+            pager_ui_set_battery(pct);
+            low_batt = (pct >= 0 && mv < BATTERY_CUTOFF_MV) ? low_batt + 1 : 0;
+            if (low_batt >= 3) {
+                say("BATTERY LOW", "charge the pager over USB-C", "then press PWR");
+                power_off();
+            }
+        }
 
         if (pager_ui_screen() == UI_PAIRING) tick_pairing();
 
@@ -310,7 +339,6 @@ static void ui_task(void *arg)
         last_screen = scr;
 
         if (s_sntp_synced && !rtc_saved) rtc_saved = rtc_clock_save();
-        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 
@@ -333,6 +361,11 @@ void app_main(void)
     }
     board_i2c_init();
     if (rtc_clock_init()) rtc_clock_restore();
+
+    /* light sleep automático entre eventos; o Wi-Fi fica em modem sleep */
+    esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 40, .light_sleep_enable = true };
+    if (esp_pm_configure(&pm) != ESP_OK) ESP_LOGW(TAG, "gerenciador de energia não configurou");
+    battery_init();
 
     s_btn_q = xQueueCreate(8, sizeof(btn_evt_t));
     epd_bsp_init();

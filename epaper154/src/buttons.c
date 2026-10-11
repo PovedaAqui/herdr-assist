@@ -1,4 +1,4 @@
-/* Varredura dos dois botões a cada 10 ms; a classificação mora em
+/* Varredura dos dois botões (10 ms ativa, 40 ms parada); a classificação mora em
  * buttons_machine.c. Pinos: BOOT=GPIO0, PWR=GPIO18 (board_pins.h). */
 
 #include "buttons.h"
@@ -29,7 +29,11 @@ static void scan_task(void *arg)
         bool pressed[2];
         for (int i = 0; i < 2; i++) pressed[i] = gpio_get_level(PINS[i]) == 0;
         buttons_machine_step(&s_m, pressed, esp_timer_get_time() / 1000, s_cb);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        /* parado, 40 ms entre leituras (um toque real dura >= 50 ms) para o
+         * light sleep render; com algo apertado ou mudando, 10 ms */
+        bool busy = pressed[0] || pressed[1] || s_m.down[0] || s_m.down[1] ||
+                    s_m.raw[0] != s_m.down[0] || s_m.raw[1] != s_m.down[1];
+        vTaskDelay(pdMS_TO_TICKS(busy ? 10 : 40));
     }
 }
 

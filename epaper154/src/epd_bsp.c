@@ -19,6 +19,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_ssd1681.h"
 #include "esp_log.h"
+#include "esp_pm.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -39,6 +40,8 @@ static const char *TAG = "epd";
 
 static esp_lcd_panel_handle_t s_panel;
 static SemaphoreHandle_t s_done;
+/* durante o refresh o BUSY precisa acordar a CPU: sem light sleep até ele cair */
+static esp_pm_lock_handle_t s_pm_lock;
 static bool s_ready;
 static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
 static int  s_fast_count;
@@ -93,6 +96,7 @@ bool epd_bsp_init(void)
     ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1681(io, &dev, &s_panel));
 
     s_done = xSemaphoreCreateBinary();
+    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "epd", &s_pm_lock);
     epaper_panel_callbacks_t cbs = { .on_epaper_refresh_done = on_refresh_done };
     epaper_panel_register_event_callbacks(s_panel, &cbs, s_done);
 
@@ -116,6 +120,7 @@ void epd_bsp_flush(bool full)
 {
     if (!s_ready) return;
     int64_t t0 = esp_timer_get_time();
+    if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
     full = full || s_fast_count >= EPD_FAST_BUDGET;
 
     if (full && s_fast_lut) {
@@ -136,6 +141,7 @@ void epd_bsp_flush(bool full)
     if (xSemaphoreTake(s_done, EPD_REFRESH_TMO) != pdTRUE)
         ESP_LOGW(TAG, "refresh sem fim de BUSY em %d ms", (int)pdTICKS_TO_MS(EPD_REFRESH_TMO));
 
+    if (s_pm_lock) esp_pm_lock_release(s_pm_lock);
     s_fast_count = full ? 0 : s_fast_count + 1;
     s_flushes++;
     s_last_ms = (int)((esp_timer_get_time() - t0) / 1000);

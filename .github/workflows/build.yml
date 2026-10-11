@@ -129,7 +129,7 @@ jobs:
           cc -std=c11 -Wall -Wextra -Isrc -Iscripts/hoststub -Iepaper154/src -o /tmp/put \
             epaper154/scripts/pager_ui_test.c epaper154/src/pager_ui.c \
             epaper154/src/epd_fb.c epaper154/src/buttons_machine.c \
-            epaper154/src/portal_form.c
+            epaper154/src/portal_form.c epaper154/src/battery_level.c
           /tmp/put
 
       - name: bridge unit tests

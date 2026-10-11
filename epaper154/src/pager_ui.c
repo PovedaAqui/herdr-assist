@@ -35,6 +35,7 @@ typedef struct {
 static ui_screen_t s_screen = UI_MAIN;
 static char s_status[32] = "starting";
 static bool s_wifi_up, s_muted, s_update;
+static int  s_batt_pct = -1;            /* -1 = sem bateria: não mostra */
 static char s_setup_ssid[33], s_setup_pass[24], s_setup_url[32];
 static char s_pair_id[16];
 static int  s_pair_secs;
@@ -122,6 +123,8 @@ static int text_len(const char *s)
         if ((*p & 0xC0) != 0x80) n++;
     return n;
 }
+
+static int draw_text_width(const char *s) { return text_len(s) * 6 - 1; }
 
 static void draw_text_right(int right_x, int y, const char *s, int scale)
 {
@@ -262,8 +265,23 @@ static void draw_top(time_t now)
     }
     draw_text(3, 3, hm, 5, 2);
     const char *link = !s_wifi_up ? "NO WIFI" : any_online() ? "ONLINE" : "OFFLINE";
-    draw_text_right(EPD_W - 3, 3, link, 1);
-    if (s_muted) draw_text_right(EPD_W - 3, 12, "MUTED", 1);
+    draw_text_right(EPD_W - 3, 2, link, 1);
+    if (s_batt_pct >= 0) {
+        /* pilha: corpo 13x7 + polo, preenchida na proporção, e o número */
+        char pct[12];
+        snprintf(pct, sizeof(pct), "%d%%", s_batt_pct);
+        int w = draw_text_width(pct);
+        int x = EPD_W - 3 - w - 17;
+        epd_fb_rect(x, 13, 13, 1, true);
+        epd_fb_rect(x, 19, 13, 1, true);
+        epd_fb_rect(x, 13, 1, 7, true);
+        epd_fb_rect(x + 12, 13, 1, 7, true);
+        epd_fb_rect(x + 13, 15, 2, 3, true);
+        epd_fb_rect(x + 2, 15, (s_batt_pct * 9 + 50) / 100, 3, true);
+        draw_text_right(EPD_W - 3, 13, pct, 1);
+        if (s_batt_pct <= 15) epd_fb_invert_rect(x - 2, 12, EPD_W - x + 2, 8);
+    }
+    if (s_muted) draw_text(72, 7, "MUTED", 5, 1);
     epd_fb_hline(0, TOP_H, EPD_W, true);
 }
 
@@ -409,6 +427,8 @@ void pager_ui_set_status(const char *status)
 {
     snprintf(s_status, sizeof(s_status), "%s", status ? status : "");
 }
+
+void pager_ui_set_battery(int pct) { s_batt_pct = pct > 100 ? 100 : pct; }
 
 void pager_ui_set_flags(bool wifi_up, bool muted, bool update_available)
 {

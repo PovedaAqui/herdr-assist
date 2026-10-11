@@ -38,6 +38,8 @@ void pager_ui_set_message(const char *title, const char *line1, const char *line
 /* Rodapé: texto curto de estado ("wifi...", "no bridge"); NULL limpa. */
 void pager_ui_set_status(const char *status);
 void pager_ui_set_flags(bool wifi_up, bool muted, bool update_available);
+/* Carga da bateria em %, ou -1 sem bateria (o indicador some). */
+void pager_ui_set_battery(int pct);
 
 /* now = 0 quando o relógio ainda não é confiável (mostra --:--). */
 bool pager_ui_render(time_t now);

@@ -38,6 +38,8 @@ idf_component_register(
         "settings.c"
         "portal.c"
         "portal_form.c"
+        "battery.c"
+        "battery_level.c"
         ${SHARED_SRCS}
     INCLUDE_DIRS "." "shared"
     PRIV_REQUIRES
@@ -53,4 +55,6 @@ idf_component_register(
         esp_https_ota
         app_update
         esp_timer
+        esp_adc
+        esp_pm
 )

@@ -3,7 +3,7 @@
  *   cc -std=c11 -Wall -Wextra -Isrc -Iscripts/hoststub -Iepaper154/src \
  *      -o /tmp/put epaper154/scripts/pager_ui_test.c epaper154/src/pager_ui.c \
  *      epaper154/src/epd_fb.c epaper154/src/buttons_machine.c \
- *      epaper154/src/portal_form.c && /tmp/put [dir]
+ *      epaper154/src/portal_form.c epaper154/src/battery_level.c && /tmp/put [dir]
  *
  * Com [dir], grava cada tela como PBM (200x200, 1 bit) — é de onde saem as
  * imagens do README. O herdr_model aqui é um dublê: só os quatro getters que
@@ -16,6 +16,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "battery.h"
 #include "buttons.h"
 #include "epd_bsp.h"
 #include "herdr_model.h"
@@ -124,6 +125,7 @@ static void test_ui(void)
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
     tzset();
     pager_ui_set_flags(true, false, false);
+    pager_ui_set_battery(87);
     pager_ui_set_status("online: macbook");
 
     /* boot: sem agentes */
@@ -173,13 +175,16 @@ static void test_ui(void)
     add("p7", "codex", "web", "working", (uint32_t)now - 120);
     add("p8", "claude", "docs", "idle", 0);
     pager_ui_set_flags(true, true, true);
+    pager_ui_set_battery(12);
     pager_ui_render(now);
+    CHECK(ink(150, 12, 50, 8) > 150, "bateria baixa: o indicador fica invertido");
     CHECK(ink(0, 200 - 1, 200, 1) == 0, "nada desenhado na última linha (margem)");
     dump("05-full-list-muted-update");
 
     /* ponte fora */
     g_n = 0; g_gen++; g_conn = HERDR_CONN_OFFLINE;
     pager_ui_set_flags(true, false, false);
+    pager_ui_set_battery(-1);
     pager_ui_set_status("bridge unreachable");
     pager_ui_render(0);
     dump("06-no-bridge");
@@ -217,11 +222,28 @@ static void test_portal_form(void)
     CHECK(portal_form_get("ssid=&pass=", "ssid", out, sizeof(out)) && out[0] == '\0', "form: valor vazio");
 }
 
+/* ---------------------------------------------------------------- bateria */
+static void test_battery(void)
+{
+    CHECK(battery_percent_from_mv(0) == -1, "bateria: 0 mV = sem célula (indicador some)");
+    CHECK(battery_percent_from_mv(4200) == 100 && battery_percent_from_mv(4120) == 100, "bateria: cheia = 100");
+    CHECK(battery_percent_from_mv(3000) == 0 && battery_percent_from_mv(2900) == 0, "bateria: 3,0 V = 0");
+    CHECK(battery_percent_from_mv(3800) == 55, "bateria: ponto da curva (3,8 V = 55)");
+    int prev = 101, mono = 1;
+    for (int mv = 4200; mv >= 3000; mv -= 10) {
+        int p = battery_percent_from_mv(mv);
+        if (p > prev) mono = 0;
+        prev = p;
+    }
+    CHECK(mono, "bateria: a curva nunca sobe quando a tensão cai");
+}
+
 int main(int argc, char **argv)
 {
     g_dir = argc > 1 ? argv[1] : NULL;
     test_buttons();
     test_portal_form();
+    test_battery();
     test_ui();
     printf("%d checks, %d falhas\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;

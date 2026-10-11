@@ -27,6 +27,7 @@ bem.
 | Entrada | dois botões laterais: PWR e BOOT |
 | Som | codec ES8311 + amplificador (o sino) |
 | Relógio | RTC PCF85063 (a hora sobrevive ao desligar) |
+| Bateria | LiPo 3,7 V no conector MX1.25 (vem junto no SKU sem `-EN`), carregada pela USB-C |
 | Framework | ESP-IDF 5.2.1 (`espressif32@6.6.0`, o mesmo do painel) |
 
 **Atenção ao modelo:** a mesma página da Waveshare vende uma versão **G** de
@@ -98,6 +99,13 @@ sendo aplicada na ponte.
   rápidos e em toda troca de tela.
 - **A hora** vem do SNTP e é gravada no RTC; no próximo boot ela já está certa
   antes do Wi-Fi.
+- **Bateria.** A carga aparece no topo (some quando não há célula) e o
+  indicador inverte abaixo de 15 %. Entre um evento e outro o chip entra em
+  light sleep sozinho, com o Wi-Fi em modem sleep — a conexão com a ponte
+  continua de pé, então o sino chega na hora mesmo na bateria. O codec e o
+  amplificador só ficam ligados enquanto o sino toca. Com um PC na USB o light
+  sleep fica suspenso para o log funcionar; num carregador ele vale
+  normalmente. Abaixo de 3,3 V o pager avisa no vidro e desliga.
 - **OTA** igual ao do painel: checagem diária, mas cada revisão lê o seu
   manifest (`manifest-epaper154.json` / `manifest-epaper154-v1.json`) — nunca o
   `manifest.json` do painel.
@@ -116,8 +124,9 @@ sendo aplicada na ponte.
 | `src/rtc_clock.c` | PCF85063: RTC ↔ relógio do sistema |
 | `src/board.c`, `src/board_pins.h` | Trilhas de energia, I2C compartilhado, todos os pinos (do `user_config.h` oficial) |
 | `src/settings.c` | Fuso e mudo (NVS própria; o `panel_cfg` compartilhado não muda) |
+| `src/battery.c`, `src/battery_level.c` | ADC da bateria (GPIO4, divisor 1:2, do exemplo oficial) e a curva de carga (esta, C puro) |
 | `scripts/sync_shared.py` | Copia de `../src` os módulos compartilhados, carimba a versão e o manifest |
-| `scripts/pager_ui_test.c` | Teste de host: tela, foco, botões e formulário; gera as imagens deste README |
+| `scripts/pager_ui_test.c` | Teste de host: tela, foco, botões, formulário e bateria; gera as imagens deste README |
 
 Módulos compartilhados com o painel (copiados no build, nunca editados aqui):
 `discovery`, `panel_cfg`, `herdr_model`, `limits_merge`, `activity_log`,
@@ -132,7 +141,7 @@ Sem placa, sem IDF:
 ```sh
 cc -std=c11 -Wall -Wextra -Isrc -Iscripts/hoststub -Iepaper154/src -o /tmp/put \
    epaper154/scripts/pager_ui_test.c epaper154/src/pager_ui.c epaper154/src/epd_fb.c \
-   epaper154/src/buttons_machine.c epaper154/src/portal_form.c
+   epaper154/src/buttons_machine.c epaper154/src/portal_form.c epaper154/src/battery_level.c
 /tmp/put /tmp/telas      # grava cada tela como PBM 200x200
 ```
 
