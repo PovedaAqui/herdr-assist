@@ -1,0 +1,10 @@
+# Tabela de partições do herdr-assist no ESP32-S3-ePaper-1.54 — 4 MB, dois
+# slots OTA de 1,94 MB. Serve às duas revisões (V1 tem 4 MB; a V2 tem 8 MB e
+# usa a metade). Mesmo layout canônico do painel: otadata em 0xD000, app em
+# 0x10000 — o release.yml grava as imagens nesses offsets.
+# Name,   Type, SubType, Offset,   Size,     Flags
+nvs,      data, nvs,     0x9000,   0x4000,
+otadata,  data, ota,     0xd000,   0x2000,
+phy_init, data, phy,     0xf000,   0x1000,
+ota_0,    app,  ota_0,   0x10000,  0x1F0000,
+ota_1,    app,  ota_1,   0x200000, 0x1F0000,
