@@ -33,7 +33,11 @@ static void time_start(void)
         return;
     }
     s_time_started = true;
-    setenv("TZ", "<-03>3", 1);
+    /* quem já definiu um fuso antes do primeiro IP (o epaper154 grava o dele
+       na NVS) prevalece; sem isso, o padrão de sempre */
+    if (!getenv("TZ")) {
+        setenv("TZ", "<-03>3", 1);
+    }
     tzset();
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
