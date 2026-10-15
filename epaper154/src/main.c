@@ -368,10 +368,16 @@ void app_main(void)
     battery_init();
 
     s_btn_q = xQueueCreate(8, sizeof(btn_evt_t));
+
+    /* o modelo tem de existir antes de qualquer render: say() desenha a tela de
+       boot e passa por lock(), que pega s_model.mutex. Antes vinha depois de
+       say() e o primeiro boot abortava em xQueueSemaphoreTake (mutex NULL).
+       Mesma ordem do painel: herdr_model_init() antes do init da UI. */
+    herdr_model_init();
+
     epd_bsp_init();
     say("HERDR PAGER", "herdr-assist " HERDR_ASSIST_VERSION " (epaper154)", "starting...");
 
-    herdr_model_init();
     sntp_set_time_sync_notification_cb(on_sntp);
     net_wifi_init();
     if (!chime_init()) ESP_LOGW(TAG, "sem sino (codec não respondeu)");
