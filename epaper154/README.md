@@ -37,6 +37,30 @@ preto e branco. Para saber se a sua é V1 ou V2: a V2 tem `V2` na serigrafia e o
 
 ## Gravando
 
+**Faça o backup antes de qualquer gravação.** A placa vem com o firmware de
+fábrica, e depois disso é a sua configuração que vive ali — e o `-install.bin`
+apaga a NVS, então a cópia feita agora é a única que vai existir. Ligue a placa
+na USB e leia a flash inteira:
+
+```sh
+esptool.py --chip esp32s3 --port /dev/ttyACM0 flash_id          # 4 MB = V1 · 8 MB = V2
+esptool.py --chip esp32s3 --port /dev/ttyACM0 read_flash 0x0 0x800000 backup-fabrica-v2.bin
+sha256sum backup-fabrica-v2.bin     # guarde o hash junto do arquivo (e o flash_id e o MAC)
+```
+
+Na V1 o tamanho é `0x400000` (4 MB). Restaurar é uma gravação só, no mesmo
+endereço: `esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0
+backup-fabrica-v2.bin`. Se o que você quer preservar é só o Wi-Fi e o
+pareamento, salve apenas as regiões de dados — mas o tamanho depende da tabela
+que está na placa: com o **firmware de fábrica** a NVS vai de `0x9000` por
+`0x6000` e **não existe `otadata`** (é uma imagem só de fábrica, sem slots OTA);
+no layout deste device a NVS é `0x9000`/`0x4000` e o `otadata` é
+`0xd000`/`0x2000`. Confira com `esptool.py ... read_flash 0x8000 0x1000 -`
+antes de decidir o que copiar.
+
+> Use o esptool na série 4.x (`pipx install "esptool~=4.8"`), a mesma que o
+> `release.yml` fixa.
+
 Sem toolchain: baixe do [release mais recente](https://github.com/walcew/herdr-assist/releases/latest)
 o binário da sua revisão e grave com esptool:
 
