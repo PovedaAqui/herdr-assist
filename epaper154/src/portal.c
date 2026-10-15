@@ -68,15 +68,24 @@ static esp_err_t page_get(httpd_req_t *req)
         "<title>herdr pager</title><style>body{font:16px system-ui;margin:24px;max-width:420px}"
         "input,select,button{font:inherit;width:100%;padding:8px;margin:4px 0 14px;box-sizing:border-box}"
         "</style></head><body><h2>herdr pager &middot; Wi-Fi</h2>"
-        "<form method=post action=/save><label>Network</label>"
-        "<input name=ssid list=aps required maxlength=32 autocomplete=off><datalist id=aps>");
+        "<form method=post action=/save><label>Network</label><select name=pick>");
+    /* <select>, não <datalist>: o datalist não abre em WebView/Firefox Android
+       (a lista aparecia vazia no telefone); o select funciona em todo navegador */
     for (int i = 0; i < s_ap_count; i++) {
+        char sig[48];
         httpd_resp_sendstr_chunk(req, "<option value=\"");
         send_escaped(req, s_aps[i].ssid);
         httpd_resp_sendstr_chunk(req, "\">");
+        send_escaped(req, s_aps[i].ssid);
+        snprintf(sig, sizeof(sig), " (%d dBm%s)</option>", s_aps[i].rssi, s_aps[i].secure ? "" : ", open");
+        httpd_resp_sendstr_chunk(req, sig);
     }
     httpd_resp_sendstr_chunk(req,
-        "</datalist><label>Password</label><input name=pass type=password maxlength=64>"
+        "<option value=\"\">Other / hidden network (type below)</option></select>"
+        "<label>Or type the network name</label>"
+        "<input name=ssid maxlength=32 autocomplete=off placeholder='only if not in the list'>");
+    httpd_resp_sendstr_chunk(req,
+        "<label>Password</label><input name=pass type=password maxlength=64>"
         "<label>Time zone</label><select name=tz>");
     for (size_t i = 0; i < sizeof(TZS) / sizeof(TZS[0]); i++) {
         char opt[160];
@@ -108,7 +117,12 @@ static esp_err_t save_post(httpd_req_t *req)
 
     char ssid[CFG_SSID_LEN] = "", pass[CFG_PASS_LEN] = "", tzi[8] = "";
     size_t plen;
-    if (!portal_form_get(body, "ssid", ssid, sizeof(ssid)) || !ssid[0] ||
+    /* nome digitado vence; sem ele, vale o escolhido na lista */
+    if (!portal_form_get(body, "ssid", ssid, sizeof(ssid)) || !ssid[0]) {
+        ssid[0] = '\0';
+        portal_form_get(body, "pick", ssid, sizeof(ssid));
+    }
+    if (!ssid[0] ||
         (portal_form_get(body, "pass", pass, sizeof(pass)) && (plen = strlen(pass)) > 0 && plen < 8)) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_sendstr(req, "Network name required; WPA passwords have 8 to 64 characters.");
