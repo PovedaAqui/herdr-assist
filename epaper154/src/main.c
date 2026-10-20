@@ -238,12 +238,14 @@ static void handle_button(const btn_evt_t *e)
     } else if (e->id == BTN_PWR && e->kind == BTN_LONG) {
         start_pairing();
     } else if (e->id == BTN_BOOT && e->kind == BTN_SHORT) {
-        if (pager_ui_focused(&host, pane, sizeof(pane), project, sizeof(project))) {
+        /* o pager avisa, não conversa: tecla só vai para quem está esperando.
+           Mirar o foco mandaria Enter no meio do trabalho de um agente ocupado */
+        if (pager_ui_answer_target(&host, pane, sizeof(pane), project, sizeof(project))) {
             static const char *const enter[] = { "Enter" };
             esp_err_t err = herdr_conn_send_keys(host, pane, enter, 1);
             snprintf(s_status, sizeof(s_status), err == ESP_OK ? "Enter -> %s" : "not sent: %s", project);
         } else {
-            snprintf(s_status, sizeof(s_status), "PWR selects a session");
+            snprintf(s_status, sizeof(s_status), "nobody waiting");
         }
     } else if (e->id == BTN_BOOT && e->kind == BTN_LONG) {
         bool m = !chime_is_muted();

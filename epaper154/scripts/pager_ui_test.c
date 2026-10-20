@@ -140,6 +140,9 @@ static void test_ui(void)
     add("p3", "claude", "dotfiles", "done", 0);
     CHECK(pager_ui_render(now), "agentes chegaram: muda");
     CHECK(pager_ui_waiting() == 0, "ninguém esperando");
+    char tgt[32];
+    CHECK(!pager_ui_answer_target(NULL, tgt, sizeof(tgt), NULL, 0),
+          "sem ninguém esperando, o BOOT não tem alvo (nada de Enter às cegas)");
     CHECK(ink(0, 21, 200, 57) < 2000, "sem espera, a banda de alerta não fica preta");
     dump("02-all-clear");
 
@@ -150,6 +153,8 @@ static void test_ui(void)
     char pane[32], proj[32]; int host = -1;
     CHECK(pager_ui_focused(&host, pane, sizeof(pane), proj, sizeof(proj)) && !strcmp(pane, "p2"),
           "sem foco prévio, o foco vai para o primeiro esperando");
+    CHECK(pager_ui_answer_target(NULL, tgt, sizeof(tgt), NULL, 0) && !strcmp(tgt, "p2"),
+          "BOOT mira quem está esperando");
     /* bancada: com um só esperando, o PWR reescolhia o mesmo pane e o botão
        parecia morto na tela de espera */
     pager_ui_focus_next();
@@ -177,6 +182,12 @@ static void test_ui(void)
     pager_ui_focus_next();
     pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
     CHECK(!strcmp(pane, "p2"), "e segue em ciclo");
+    /* com o foco num agente ocupado, o BOOT continua mirando quem espera */
+    pager_ui_focus_next();
+    pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
+    CHECK(!strcmp(pane, "p3"), "o foco anda até um agente que trabalha");
+    CHECK(pager_ui_answer_target(NULL, tgt, sizeof(tgt), NULL, 0) && !strcmp(tgt, "p1"),
+          "BOOT mira quem espera, não o foco");
     pager_ui_render(now);
     dump("04-two-waiting");
 

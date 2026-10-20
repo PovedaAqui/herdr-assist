@@ -48,6 +48,12 @@ bool pager_ui_render(time_t now);
  * renderização (a mesma ordem que está no vidro). */
 void pager_ui_focus_next(void);
 bool pager_ui_focused(int *host, char *pane_id, int pane_len, char *project, int project_len);
+/**
+ * Alvo do BOOT: quem está esperando — o foco se ele já for um bloqueado, senão
+ * o primeiro da lista (a banda de alerta nomeia esse). false se ninguém espera:
+ * o pager avisa, não conversa, e não manda tecla para agente ocupado.
+ */
+bool pager_ui_answer_target(int *host, char *pane_id, int pane_len, char *project, int project_len);
 
 /* Quantos agentes estão em `blocked` na última renderização. */
 int pager_ui_waiting(void);

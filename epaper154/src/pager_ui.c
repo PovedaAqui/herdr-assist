@@ -478,4 +478,25 @@ bool pager_ui_focused(int *host, char *pane_id, int pane_len, char *project, int
     return true;
 }
 
+bool pager_ui_answer_target(int *host, char *pane_id, int pane_len, char *project, int project_len)
+{
+    int idx = -1;
+    if (s_focus >= 0 && s_focus < s_row_count && !strcmp(s_rows[s_focus].status, "blocked")) {
+        idx = s_focus;
+    } else {
+        /* a lista já começa nos bloqueados: o primeiro é o que a banda nomeia */
+        for (int i = 0; i < s_row_count; i++) {
+            if (!strcmp(s_rows[i].status, "blocked")) {
+                idx = i;
+                break;
+            }
+        }
+    }
+    if (idx < 0) return false;
+    if (host) *host = s_rows[idx].host;
+    if (pane_id) snprintf(pane_id, pane_len, "%s", s_rows[idx].pane_id);
+    if (project) snprintf(project, project_len, "%s", s_rows[idx].project);
+    return true;
+}
+
 int pager_ui_waiting(void) { return s_waiting; }
