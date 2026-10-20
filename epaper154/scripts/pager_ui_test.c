@@ -150,6 +150,15 @@ static void test_ui(void)
     char pane[32], proj[32]; int host = -1;
     CHECK(pager_ui_focused(&host, pane, sizeof(pane), proj, sizeof(proj)) && !strcmp(pane, "p2"),
           "sem foco prévio, o foco vai para o primeiro esperando");
+    /* bancada: com um só esperando, o PWR reescolhia o mesmo pane e o botão
+       parecia morto na tela de espera */
+    pager_ui_focus_next();
+    pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
+    CHECK(strcmp(pane, "p2") != 0, "com um só esperando, o PWR anda");
+    pager_ui_focus_next();
+    pager_ui_focus_next();                       /* 3 linhas: fecha o ciclo */
+    pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
+    CHECK(!strcmp(pane, "p2"), "o ciclo do PWR volta ao mesmo pane");
     CHECK(ink(0, 21, 200, 57) > 5000, "com espera, a banda de alerta fica invertida (preta)");
     dump("03-one-waiting");
 
@@ -161,10 +170,13 @@ static void test_ui(void)
     CHECK(!strcmp(pane, "p2"), "o foco segue o pane, não a posição na lista");
     pager_ui_focus_next();
     pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
-    CHECK(!strcmp(pane, "p1"), "PWR vai para o próximo esperando");
+    CHECK(!strcmp(pane, "p3"), "PWR anda uma posição: quem espera vem primeiro, depois o resto");
     pager_ui_focus_next();
     pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
-    CHECK(!strcmp(pane, "p2"), "PWR anda só entre os esperando (pula o 'done')");
+    CHECK(!strcmp(pane, "p1"), "do fim da lista volta ao topo, onde ficam os que esperam");
+    pager_ui_focus_next();
+    pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0);
+    CHECK(!strcmp(pane, "p2"), "e segue em ciclo");
     pager_ui_render(now);
     dump("04-two-waiting");
 

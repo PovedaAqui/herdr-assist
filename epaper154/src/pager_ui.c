@@ -459,16 +459,12 @@ bool pager_ui_render(time_t now)
 void pager_ui_focus_next(void)
 {
     if (s_row_count == 0) return;
-    int start = s_focus;
-    /* com alguém esperando, o PWR anda só entre os que esperam */
-    if (s_waiting > 0) {
-        for (int step = 1; step <= s_row_count; step++) {
-            int i = (start + step + s_row_count) % s_row_count;
-            if (!strcmp(s_rows[i].status, "blocked")) { s_focus = i; break; }
-        }
-    } else {
-        s_focus = (start + 1) % s_row_count;
-    }
+    /* Uma posição por vez. A lista já vem ordenada blocked -> working -> done ->
+       idle, então quem espera aparece primeiro e o resto vem depois — que é o
+       que o §4 pede ("percorre quem espera e depois todos"). Antes, com alguém
+       esperando, o laço procurava outro "blocked": com um único esperando ele
+       reescolhia o mesmo pane, e na tela de espera o PWR parecia morto. */
+    s_focus = (s_focus + 1) % s_row_count;
     snprintf(s_focus_pane, sizeof(s_focus_pane), "%s", s_rows[s_focus].pane_id);
     s_focus_host = s_rows[s_focus].host;
 }
