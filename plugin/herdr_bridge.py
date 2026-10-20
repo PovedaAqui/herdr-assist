@@ -22,7 +22,8 @@ HERDR_SOCKET_PATH e HERDR_PLUGIN_CONFIG_DIR; para rodar avulsa:
 Toda conexão exige um handshake `{"type":"hello","token":"..."}` na primeira
 linha — sem token não roda: se nenhum existir, um é gerado e salvo (0600).
 
-Variáveis: HERDR_SOCK, BRIDGE_PORT (9375), BRIDGE_BIND (0.0.0.0), BRIDGE_TOKEN.
+Variáveis: HERDR_SOCK, BRIDGE_PORT (9375), BRIDGE_BIND (0.0.0.0), BRIDGE_TOKEN,
+BRIDGE_MACHINES (máquinas SSH salvas a incluir: vazio, "all" ou lista).
 """
 from __future__ import annotations
 
@@ -61,6 +62,17 @@ CONFIG_DIR = os.environ.get("HERDR_PLUGIN_CONFIG_DIR",
                             os.path.expanduser("~/.config/herdr-assist"))
 TOKEN_FILE = os.path.join(CONFIG_DIR, "token")
 TOKEN = ""  # carregado em main()
+
+# Máquinas SSH salvas no Herdr que a ponte também deve mostrar. O servidor
+# local só conhece os próprios panes; o cliente do Herdr junta várias máquinas
+# na tela, e é isso que o painel deve espelhar. Vazio = só o servidor local;
+# "all" = todas as habilitadas; ou rótulos/ids separados por vírgula.
+# Nada é instalado na máquina remota: o próprio Herdr usa o perfil salvo
+# (`herdr --machine <id> ...`) para falar com ela.
+MACHINES = os.environ.get("BRIDGE_MACHINES", "").strip()
+REMOTE_POLL_S = 5.0
+remote_agents: list[dict] = []          # última leitura das máquinas remotas
+remote_panes: dict = {}                 # "HVM/w7:p1" -> (profile_id, "w7:p1")
 
 # Repositórios de avatar que o painel deve varrer além do padrão de fábrica:
 # uma URL base por linha, "#" comenta. Fica no config-dir, ao lado do token —
@@ -622,6 +634,90 @@ def _session_paths() -> list:
     return list(pane_paths.values())
 
 
+def machine_code(label: str) -> str:
+    """Rótulo curto (3 letras) que caiba na linha do painel: "Hermes VM" -> HVM."""
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", label or "") if w]
+    if not words:
+        return "REM"
+    if len(words) == 1:
+        return words[0][:3].upper()
+    return "".join(w[0] for w in words)[:3].upper()
+
+
+async def refresh_machines() -> None:
+    """Relê os agentes das máquinas salvas e troca o cache de uma vez.
+
+    O id do pane vai com o código da máquina na frente ("HVM/w7:p1") porque
+    w7:p1 existe nos dois servidores — e é por ele que a ponte sabe para onde
+    mandar focus/send_keys depois.
+    """
+    global remote_agents, remote_panes
+    if not MACHINES:
+        return
+    out = await cli_run(["machine", "list", "--json"], timeout=8)
+    if not out:
+        return
+    try:
+        profiles = json.loads(out)
+    except json.JSONDecodeError:
+        return
+    wanted = {w.strip().lower() for w in MACHINES.split(",") if w.strip()}
+    picked = []
+    for p in profiles:
+        if not p.get("enabled"):
+            continue
+        if "all" not in wanted:
+            names = {(p.get("label") or "").lower(), (p.get("id") or "").lower()}
+            if not (names & wanted):
+                continue
+        picked.append(p)
+
+    agents: list[dict] = []
+    pane_map: dict = {}
+    ok = 0
+    for p in picked:
+        code = machine_code(p.get("label") or p.get("id") or "")
+        data = await cli_run(["--machine", p["id"], "agent", "list"], timeout=15)
+        if not data:
+            continue                      # máquina fora do ar: mantém o resto
+        try:
+            raws = json.loads(data).get("result", {}).get("agents", [])
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        ok += 1
+        for a in raws:
+            raw = a.get("pane_id")
+            if not raw:
+                continue
+            ns = f"{code}/{raw}"
+            pane_map[ns] = (p["id"], raw)
+            agents.append({
+                "pane_id": ns,
+                "agent": a.get("agent", ""),
+                "status": a.get("agent_status", "unknown"),
+                "project": f"{code}/{os.path.basename(a.get('cwd') or '')}",
+                "workspace_id": a.get("workspace_id", ""),
+                "machine": p.get("label", ""),
+            })
+    if picked and ok == 0:
+        # nenhuma máquina respondeu: é queda de SSH/rede, não "acabaram os
+        # agentes" — manter o último retrato evita a tela esvaziar sozinha
+        return
+    if agents != remote_agents:
+        log.info("máquinas: %d agente(s) de %d máquina(s)", len(agents), len(picked))
+    remote_agents = agents
+    remote_panes = pane_map
+
+
+async def machines_loop() -> None:
+    while True:
+        try:
+            await refresh_machines()
+        except Exception as exc:          # SSH/rede nunca derruba a ponte
+            log.warning("máquinas: %s", exc)
+        await asyncio.sleep(REMOTE_POLL_S)
+
+
 async def push_agents() -> set[str] | None:
     """Reconcilia com o Herdr; envia aos painéis só o que de fato mudou.
 
@@ -743,6 +839,11 @@ async def push_agents() -> set[str] | None:
     pane_paths = pane_path  # publica o mapa desta rodada para _session_paths()
     codex_paths.clear()     # idem para os rollouts (mutação in-place: sem global)
     codex_paths.update(codex_path)
+
+    # Máquinas SSH salvas (BRIDGE_MACHINES): entram no mesmo snapshot, com o id
+    # prefixado pelo código da máquina. O cliente do Herdr mostra várias
+    # máquinas juntas; o servidor local não, então é a ponte que junta.
+    agents.extend(remote_agents)
 
     # reconstruir em vez de mutar poda de graça quem saiu de working ou sumiu
     working_since = new_since
@@ -1161,6 +1262,13 @@ async def handle_command(msg: dict, writer: asyncio.StreamWriter) -> None:
         if pane_id not in known_panes:
             return await deny("pane desconhecido")
 
+    # pane de outra máquina: o socket local não o alcança, só a CLI com
+    # --machine. Só focus e send_keys fazem sentido para o pager, e é o que a
+    # allowlist de teclas continua valendo.
+    remote = remote_panes.get(pane_id) if pane_id else None
+    if remote and kind not in ("focus", "send_keys"):
+        return await deny("pane de outra máquina: só focus e send_keys")
+
     if kind == "read_pane":
         lines = max(1, min(int(msg.get("lines", PANE_LINES)), 60))
         # O painel manda a geometria da própria tela: enquanto ele estiver lendo
@@ -1189,7 +1297,10 @@ async def handle_command(msg: dict, writer: asyncio.StreamWriter) -> None:
         if not all(k in SAFE_KEYS for k in keys):
             return await deny("tecla fora da allowlist")
         log.info("send_keys pane=%s keys=%s", pane_id, keys)
-        await herdr_request("pane.send_keys", {"pane_id": pane_id, "keys": keys})
+        if remote:
+            await cli_run(["--machine", remote[0], "pane", "send-keys", remote[1], *keys])
+        else:
+            await herdr_request("pane.send_keys", {"pane_id": pane_id, "keys": keys})
 
     elif kind == "send_text":
         text = msg.get("text", "")
@@ -1200,7 +1311,10 @@ async def handle_command(msg: dict, writer: asyncio.StreamWriter) -> None:
 
     elif kind == "focus":
         log.info("focus pane=%s", pane_id)
-        await herdr_request("pane.focus", {"pane_id": pane_id})
+        if remote:
+            await cli_run(["--machine", remote[0], "agent", "focus", remote[1]])
+        else:
+            await herdr_request("pane.focus", {"pane_id": pane_id})
 
     elif kind == "scroll_pane":
         lines = max(1, min(int(msg.get("lines", 1)), 20))
@@ -1392,6 +1506,10 @@ async def main() -> None:
     asyncio.create_task(poll_loop() if USE_CLI else event_loop())
     asyncio.create_task(limits_loop())
     asyncio.create_task(update_loop())
+    if MACHINES:
+        # só aqui a ponte toca SSH: as máquinas são lidas pelo próprio Herdr
+        log.info("incluindo máquinas salvas: %s", MACHINES)
+        asyncio.create_task(machines_loop())
     # porta UDP ocupada não pode derrubar a ponte: sem descoberta ela ainda
     # serve os painéis que já sabem o endereço
     try:
