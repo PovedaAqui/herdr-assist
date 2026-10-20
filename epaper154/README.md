@@ -11,10 +11,10 @@ agentes das máquinas SSH salvas entram no mesmo snapshot. O que muda é a cara:
 200×200 monocromático não cabe terminal, então o device faz uma coisa só, e faz
 bem.
 
-| Alguém esperando | Tudo em ordem | Configurar o Wi-Fi | Parear |
-|:---:|:---:|:---:|:---:|
-| ![Banda de alerta invertida com o agente que espera](docs/images/tela-esperando.png) | ![Lista de sessões, nenhuma esperando](docs/images/tela-tudo-ok.png) | ![Rede e senha do ponto de acesso](docs/images/tela-wifi.png) | ![Código de pareamento](docs/images/tela-pareamento.png) |
-| A banda inverte; o sino toca na transição | Esperando primeiro, depois trabalhando | Celular entra na rede do pager | O host entrega a config |
+| Alguém esperando | Dois esperando | Tudo em ordem | Configurar o Wi-Fi | Parear |
+|:---:|:---:|:---:|:---:|:---:|
+| ![Banda de alerta invertida com o agente que espera](docs/images/tela-esperando.png) | ![Duas sessões esperando e a dica de ciclo](docs/images/tela-duas-esperando.png) | ![Lista de sessões, nenhuma esperando](docs/images/tela-tudo-ok.png) | ![Rede e senha do ponto de acesso](docs/images/tela-wifi.png) | ![Código de pareamento](docs/images/tela-pareamento.png) |
+| A banda inverte; o sino toca na transição | `+N more: PWR to cycle` quando há mais de um | Esperando primeiro, depois trabalhando | Celular entra na rede do pager | O host entrega a config |
 
 > As imagens acima são renderizações do próprio `pager_ui.c` no host
 > (`scripts/pager_ui_test.c`), pixel a pixel o que vai para o vidro.

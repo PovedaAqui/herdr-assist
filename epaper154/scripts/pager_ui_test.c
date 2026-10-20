@@ -126,7 +126,7 @@ static void test_ui(void)
     tzset();
     pager_ui_set_flags(true, false, false);
     pager_ui_set_battery(87);
-    pager_ui_set_status("online: macbook");
+    pager_ui_set_status("online: workstation");
 
     /* boot: sem agentes */
     g_n = 0;
@@ -135,9 +135,9 @@ static void test_ui(void)
     CHECK(!pager_ui_render(now), "nada mudou: render devolve false (e-paper fica quieto)");
 
     /* dois trabalhando, um pronto */
-    add("p1", "claude", "herdr-pager", "working", (uint32_t)now - 754);
-    add("p2", "codex", "coffee-zaragoza", "working", (uint32_t)now - 7300);
-    add("p3", "claude", "dotfiles", "done", 0);
+    add("p1", "claude", "web-app", "working", (uint32_t)now - 754);
+    add("p2", "codex", "api", "working", (uint32_t)now - 7300);
+    add("p3", "claude", "lib", "done", 0);
     CHECK(pager_ui_render(now), "agentes chegaram: muda");
     CHECK(pager_ui_waiting() == 0, "ninguém esperando");
     char tgt[32];
@@ -188,12 +188,14 @@ static void test_ui(void)
     CHECK(!strcmp(pane, "p3"), "o foco anda até um agente que trabalha");
     CHECK(pager_ui_answer_target(NULL, tgt, sizeof(tgt), NULL, 0) && !strcmp(tgt, "p1"),
           "BOOT mira quem espera, não o foco");
+    pager_ui_focus_next();          /* o foco volta para quem espera: é o que a
+                                       imagem do README mostra */
     pager_ui_render(now);
     dump("04-two-waiting");
 
     /* lista cheia, nomes longos e UTF-8 */
-    add("p4", "gemini", "a-very-long-project-name-that-overflows", "working", (uint32_t)now - 30);
-    add("p5", "claude", "café-api", "idle", 0);
+    add("p4", "gemini", "a-very-long-project-name", "working", (uint32_t)now - 30);
+    add("p5", "claude", "analytics", "idle", 0);
     add("p6", "claude", "infra", "unknown", 0);
     add("p7", "codex", "web", "working", (uint32_t)now - 120);
     add("p8", "claude", "docs", "idle", 0);
