@@ -93,6 +93,9 @@ Ela também confere de minuto em minuto se o código em disco ainda é o que est
 Isso cobre o `herdr plugin install` feito na mão, cujo par (`restart-bridge`) é o passo
 que todo mundo esquece — em até um minuto a ponte percebe e sobe de novo sozinha.
 
+Para subir, reiniciar e diagnosticar a ponte na mão — token, `env`, logs e as regras de
+firewall — veja [`plugin/README.md`](plugin/README.md).
+
 Para desligar, `AUTO_UPDATE=0` numa linha do arquivo `env` do config-dir. Um checkout
 **linkado** nunca é reinstalado por cima: ali quem atualiza é o `git pull`. Para mexer no
 plugin, o caminho é `git clone` do repositório + `herdr plugin link herdr-assist/plugin`.

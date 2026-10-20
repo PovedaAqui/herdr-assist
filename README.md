@@ -90,6 +90,9 @@ It also checks every minute whether the code on disk is still the code it is run
 covers a `herdr plugin install` done by hand, whose companion step (`restart-bridge`) is
 the one everybody forgets — within a minute the bridge notices and comes back on its own.
 
+Running, restarting and troubleshooting the bridge by hand — where the token, `env` and
+logs live, and the firewall rules — is in [`plugin/README.md`](plugin/README.md).
+
 To turn it off, put `AUTO_UPDATE=0` on a line of the `env` file in the config directory. A
 **linked** checkout is never reinstalled over: there, `git pull` is what updates it. To
 hack on the plugin, `git clone` the repo and `herdr plugin link herdr-assist/plugin`.
