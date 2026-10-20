@@ -36,7 +36,9 @@
 #include "esp_sleep.h"
 #include "esp_sntp.h"
 #include "esp_attr.h"
+#include "esp_event.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -60,6 +62,10 @@
 #include "settings.h"
 
 static const char *TAG = "pager";
+
+/* último motivo de queda do STA: é o que separa "senha errada" de "rede fora
+   do ar" na tela de erro — sem ele o pager ficava mudo e offline para sempre */
+static volatile uint8_t s_wifi_reason;
 
 typedef struct { btn_id_t id; btn_kind_t kind; } btn_evt_t;
 
@@ -342,6 +348,64 @@ static void ui_task(void *arg)
     }
 }
 
+/* ------------------------------------------------------------ wi-fi errors */
+static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg;
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        s_wifi_reason = ((wifi_event_sta_disconnected_t *)data)->reason;
+    }
+}
+
+/* os dois casos que o usuário precisa distinguir; o resto vira "não conectou" */
+static bool wifi_reason_fatal(uint8_t r)
+{
+    return r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_NO_AP_FOUND ||
+           r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT;
+}
+
+/**
+ * Espera o IP depois do net_wifi_connect().
+ *
+ * O net.c re-tenta sozinho a cada 2 s, então um motivo fatal (senha errada,
+ * rede inexistente) já se repetiu várias vezes em 6 s — não adianta esperar o
+ * teto inteiro. Motivo não fatal (DHCP lento e afins) tem o teto todo.
+ */
+static bool wait_for_ip(int timeout_ms)
+{
+    for (int waited = 0; waited < timeout_ms; waited += 200) {
+        if (net_wifi_is_up()) {
+            return true;
+        }
+        if (wifi_reason_fatal(s_wifi_reason) && waited >= 6000) {
+            return false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    return net_wifi_is_up();
+}
+
+/**
+ * Credencial errada não pode terminar em silêncio.
+ *
+ * Antes: o net.c re-tentava para sempre, o pager ficava offline e sem dizer
+ * por quê, e voltar ao portal exigia saber o acorde PWR+BOOT. Agora o motivo
+ * vai para a tela e o portal reabre sozinho — corrigir é só salvar de novo.
+ */
+static void wifi_failed_screen(const char *ssid)
+{
+    uint8_t r = s_wifi_reason;
+    const char *why = "could not connect";
+    if (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+        why = "wrong password?";
+    } else if (r == WIFI_REASON_NO_AP_FOUND) {
+        why = "network not found";
+    }
+    ESP_LOGW(TAG, "sem IP (reason %u): %s - abrindo o setup", r, why);
+    say("WI-FI FAILED", why, ssid);
+    vTaskDelay(pdMS_TO_TICKS(4000));      /* ler antes de a tela de setup trocar */
+}
+
 /* ------------------------------------------------------------ boot */
 void app_main(void)
 {
@@ -380,6 +444,8 @@ void app_main(void)
 
     sntp_set_time_sync_notification_cb(on_sntp);
     net_wifi_init();
+    /* handler aditivo: o net.c já re-tenta sozinho, isto só registra o motivo */
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_wifi_event, NULL);
     if (!chime_init()) ESP_LOGW(TAG, "sem sino (codec não respondeu)");
     chime_set_muted(settings_get_muted());
     buttons_init(on_button);
@@ -389,9 +455,15 @@ void app_main(void)
     if (!panel_cfg_wifi_ok() || want_setup) {
         enter_setup();
     } else {
-        net_wifi_connect(panel_cfg_get()->wifi_ssid, panel_cfg_get()->wifi_pass);
+        const panel_cfg_t *cfg = panel_cfg_get();
+        s_wifi_reason = 0;
+        net_wifi_connect(cfg->wifi_ssid, cfg->wifi_pass);
         fw_update_init();                   /* confirma o slot (rollback) e checa 1x/dia */
-        if (has_host()) {
+        if (!wait_for_ip(30000)) {
+            /* senha errada / rede ausente: diz o motivo e reabre o portal */
+            wifi_failed_screen(cfg->wifi_ssid);
+            enter_setup();
+        } else if (has_host()) {
             if (herdr_conn_start() == ESP_OK) s_conn_started = true;
             pager_ui_set_screen(UI_MAIN);
         } else {
