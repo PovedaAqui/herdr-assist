@@ -21,6 +21,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 # portal (httpd) + ponte + pareamento + descoberta
 CONFIG_LWIP_MAX_SOCKETS=16
+# 2048: o navegador do celular manda bem mais que os 512 padrão de cabeçalho, e
+# o httpd respondia 431 "Header fields are too long" sem chegar a ler o
+# formulário (visto na bancada com Android, ao salvar a rede)
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 # bateria: light sleep automático entre eventos (esp_pm_configure no
 # app_main), suspenso enquanto um PC estiver na USB para o log continuar
 CONFIG_PM_ENABLE=y
