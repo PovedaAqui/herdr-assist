@@ -634,6 +634,19 @@ def _session_paths() -> list:
     return list(pane_paths.values())
 
 
+def friendly_name(label: str, cwd: str) -> str:
+    """Nome mostrado na linha: o rótulo da aba do Herdr, senão o basename do cwd.
+
+    O rótulo é o que a pessoa vê no Herdr ("OMP", "agent-claude", "agent-codex");
+    o basename ("tmp", "luispoveda93") não diz nada a quem olha a tela. Aba sem
+    nome vem como número ("1") e aí o cwd ainda é melhor que "1".
+    """
+    label = (label or "").strip()
+    if label and not label.isdigit():
+        return label
+    return os.path.basename(cwd or "")
+
+
 def machine_code(label: str) -> str:
     """Rótulo curto (3 letras) que caiba na linha do painel: "Hermes VM" -> HVM."""
     words = [w for w in re.split(r"[^A-Za-z0-9]+", label or "") if w]
@@ -677,25 +690,32 @@ async def refresh_machines() -> None:
     ok = 0
     for p in picked:
         code = machine_code(p.get("label") or p.get("id") or "")
-        data = await cli_run(["--machine", p["id"], "agent", "list"], timeout=15)
+        # api snapshot traz agentes e abas numa chamada só (uma ida SSH por
+        # máquina por ciclo); o rótulo da aba é o nome amigável do agente
+        data = await cli_run(["--machine", p["id"], "api", "snapshot"], timeout=15)
         if not data:
             continue                      # máquina fora do ar: mantém o resto
         try:
-            raws = json.loads(data).get("result", {}).get("agents", [])
+            snap = json.loads(data).get("result", {}).get("snapshot", {}) or {}
         except (json.JSONDecodeError, AttributeError):
             continue
+        if not snap:
+            continue
         ok += 1
-        for a in raws:
+        labels = {t.get("tab_id"): (t.get("label") or "")
+                  for t in snap.get("tabs", [])}
+        for a in snap.get("agents", []):
             raw = a.get("pane_id")
             if not raw:
                 continue
+            name = friendly_name(labels.get(a.get("tab_id"), ""), a.get("cwd") or "")
             ns = f"{code}/{raw}"
             pane_map[ns] = (p["id"], raw)
             agents.append({
                 "pane_id": ns,
                 "agent": a.get("agent", ""),
                 "status": a.get("agent_status", "unknown"),
-                "project": f"{code}/{os.path.basename(a.get('cwd') or '')}",
+                "project": f"{code}/{name}",
                 "workspace_id": a.get("workspace_id", ""),
                 "machine": p.get("label", ""),
             })
@@ -730,6 +750,11 @@ async def push_agents() -> set[str] | None:
     if not result:
         return None
     panes = result.get("panes", [])
+    # nome amigável do agente = rótulo da aba no Herdr ("OMP", "agent-claude");
+    # o basename do cwd ("tmp", "luispoveda93") não diz nada a quem olha a tela
+    tabs_res = await herdr_request("tab.list") or {}
+    tab_label = {t.get("tab_id"): (t.get("label") or "")
+                 for t in tabs_res.get("tabs", [])}
     # Composição de panes (todos, não só os com agente) chaveada por
     # (pane_id, agent): é ela que decide troca de conta (login/logout, pane
     # novo de outra conta, OU o mesmo pane trocando de agente — o pid do SO
@@ -760,11 +785,12 @@ async def push_agents() -> set[str] | None:
         if not p.get("agent"):
             continue
         pid, status = p["pane_id"], p.get("agent_status", "unknown")
+        label = tab_label.get(p.get("tab_id"), "")
         a = {
             "pane_id": pid,
             "agent": p.get("agent", ""),
             "status": status,
-            "project": os.path.basename(p.get("cwd", "")),
+            "project": friendly_name(label, p.get("cwd", "")),
             "workspace_id": p.get("workspace_id", ""),
         }
         acc = pane_account.get(pid)

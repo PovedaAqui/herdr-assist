@@ -10,10 +10,25 @@ PROFILE = {"id": "78dd71e3", "label": "Hermes VM", "target": "hermes-vm",
            "session": "default", "enabled": True}
 
 
-def agents_payload(pane, cwd, agent="hermes", status="idle"):
-    return json.dumps({"id": "cli:agent:list", "result": {"agents": [{
-        "pane_id": pane, "agent": agent, "agent_status": status,
-        "cwd": cwd, "workspace_id": "w7"}], "type": "agent_list"}})
+def snapshot_payload(pane, cwd, agent="hermes", status="idle",
+                     tab="w7:t1", label="1"):
+    """Mesmo formato de `herdr --machine <id> api snapshot`."""
+    return json.dumps({"id": "cli:api:snapshot", "result": {"snapshot": {
+        "agents": [{"pane_id": pane, "agent": agent, "agent_status": status,
+                    "cwd": cwd, "workspace_id": "w7", "tab_id": tab}],
+        "tabs": [{"tab_id": tab, "label": label, "workspace_id": "w7"}],
+    }}})
+
+
+class TestFriendlyName(unittest.TestCase):
+    def test_rotulo_da_aba_vence(self):
+        self.assertEqual(b.friendly_name("agent-claude", "/tmp"), "agent-claude")
+
+    def test_aba_sem_nome_cai_no_cwd(self):
+        self.assertEqual(b.friendly_name("1", "/home/luis"), "luis")
+
+    def test_sem_rotulo_cai_no_cwd(self):
+        self.assertEqual(b.friendly_name("", "/home/luis"), "luis")
 
 
 class TestMachineCode(unittest.TestCase):
@@ -48,7 +63,7 @@ class TestRefreshMachines(unittest.TestCase):
     def test_traz_o_agente_remoto_com_id_e_projeto_prefixados(self):
         self.fake({
             "machine list --json": json.dumps([PROFILE]),
-            "--machine 78dd71e3 agent list": agents_payload("w7:p1", "/home/luis"),
+            "--machine 78dd71e3 api snapshot": snapshot_payload("w7:p1", "/home/luis"),
         })
         self.run_refresh()
         self.assertEqual(len(b.remote_agents), 1)
@@ -61,10 +76,19 @@ class TestRefreshMachines(unittest.TestCase):
         # é este mapa que manda focus/send_keys para o servidor certo
         self.assertEqual(b.remote_panes["HV/w7:p1"], ("78dd71e3", "w7:p1"))
 
+    def test_rotulo_da_aba_remota_vira_nome(self):
+        self.fake({
+            "machine list --json": json.dumps([PROFILE]),
+            "--machine 78dd71e3 api snapshot": snapshot_payload(
+                "w7:p1", "/home/luis", label="agent-hermes"),
+        })
+        self.run_refresh()
+        self.assertEqual(b.remote_agents[0]["project"], "HV/agent-hermes")
+
     def test_maquina_desabilitada_fica_de_fora(self):
         self.fake({
             "machine list --json": json.dumps([dict(PROFILE, enabled=False)]),
-            "--machine 78dd71e3 agent list": agents_payload("w7:p1", "/home/luis"),
+            "--machine 78dd71e3 api snapshot": snapshot_payload("w7:p1", "/home/luis"),
         })
         self.run_refresh()
         self.assertEqual(b.remote_agents, [])
@@ -74,7 +98,7 @@ class TestRefreshMachines(unittest.TestCase):
         b.MACHINES = "hermes vm"
         self.fake({
             "machine list --json": json.dumps([PROFILE, dict(PROFILE, id="outra", label="Build box")]),
-            "--machine 78dd71e3 agent list": agents_payload("w7:p1", "/home/luis"),
+            "--machine 78dd71e3 api snapshot": snapshot_payload("w7:p1", "/home/luis"),
         })
         self.run_refresh()
         self.assertEqual([a["pane_id"] for a in b.remote_agents], ["HV/w7:p1"])
@@ -82,7 +106,7 @@ class TestRefreshMachines(unittest.TestCase):
     def test_uma_maquina_fora_do_ar_nao_derruba_as_outras(self):
         self.fake({
             "machine list --json": json.dumps([PROFILE, dict(PROFILE, id="bbbb", label="Build box")]),
-            "--machine 78dd71e3 agent list": agents_payload("w7:p1", "/home/luis"),
+            "--machine 78dd71e3 api snapshot": snapshot_payload("w7:p1", "/home/luis"),
             # "bbbb" não responde (cli_run devolve None)
         })
         self.run_refresh()
@@ -91,7 +115,7 @@ class TestRefreshMachines(unittest.TestCase):
     def test_json_quebrado_nao_apaga_o_cache(self):
         self.fake({
             "machine list --json": json.dumps([PROFILE]),
-            "--machine 78dd71e3 agent list": agents_payload("w7:p1", "/home/luis"),
+            "--machine 78dd71e3 api snapshot": snapshot_payload("w7:p1", "/home/luis"),
         })
         self.run_refresh()
         self.fake({
