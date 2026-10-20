@@ -24,7 +24,7 @@ bem.
 |---|---|
 | Placa | Waveshare ESP32-S3-ePaper-1.54 — **V2** (ESP32-S3-PICO-1-N8R8, 8 MB flash, 8 MB PSRAM octal) ou **V1** (ESP32-S3FH4R2, 4 MB flash, 2 MB PSRAM quad) |
 | Tela | 1,54" 200×200 preto e branco, controlador SSD1681 |
-| Entrada | dois botões laterais: PWR e BOOT |
+| Entrada | dois botões laterais: PWR e o segundo botão (na V2 serigrafado com um sol; no esquema e aqui ele é o **BOOT**) |
 | Som | codec ES8311 + amplificador (o sino) |
 | Relógio | RTC PCF85063 (a hora sobrevive ao desligar) |
 | Bateria | LiPo 3,7 V no conector MX1.25 (vem junto no SKU sem `-EN`), carregada pela USB-C |
@@ -99,10 +99,10 @@ Pronto: a tela passa a listar as sessões do Herdr.
 
 | Gesto | Na tela principal |
 |---|---|
-| **PWR** curto | foca a próxima sessão — com alguém esperando, anda só entre os que esperam — e manda `focus` (a sessão aparece no Herdr) |
+| **PWR** curto | anda uma sessão por vez — a lista já vem com quem espera no topo, depois o resto — e manda `focus` (a sessão aparece no Herdr) |
 | **PWR** longo (0,7 s) | abre a janela de pareamento (novo host ou reparear) |
 | **PWR** 3 s | desliga; o PWR acorda |
-| **BOOT** curto | manda **Enter** à sessão em foco |
+| **BOOT** curto | manda **Enter** para a sessão que está **esperando** (a que a banda nomeia: o foco se ele já for um bloqueado, senão a primeira da lista). Sem ninguém esperando não manda nada, para não injetar tecla no meio do trabalho de um agente ocupado |
 | **BOOT** longo (0,7 s) | sino mudo / ligado (fica gravado) |
 | **BOOT** 3 s | instala a atualização de firmware, quando o rodapé mostra `UPDATE` |
 | **PWR + BOOT** 3 s | volta à configuração do Wi-Fi (de novo, cancela) |
