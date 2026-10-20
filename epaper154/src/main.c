@@ -66,6 +66,9 @@ static const char *TAG = "pager";
 /* último motivo de queda do STA: é o que separa "senha errada" de "rede fora
    do ar" na tela de erro — sem ele o pager ficava mudo e offline para sempre */
 static volatile uint8_t s_wifi_reason;
+/* senha errada aparece como AUTH_FAIL, mas a re-tentativa seguinte pode cair
+   em NO_AP_FOUND e sobrescrever o motivo; isto guarda o que já foi visto */
+static volatile bool s_wifi_auth_failed;
 
 typedef struct { btn_id_t id; btn_kind_t kind; } btn_evt_t;
 
@@ -353,7 +356,12 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_wifi_reason = ((wifi_event_sta_disconnected_t *)data)->reason;
+        uint8_t r = ((wifi_event_sta_disconnected_t *)data)->reason;
+        s_wifi_reason = r;
+        if (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+            s_wifi_auth_failed = true;
+        }
+        ESP_LOGW(TAG, "STA caiu: reason %u", r);
     }
 }
 
@@ -396,7 +404,8 @@ static void wifi_failed_screen(const char *ssid)
 {
     uint8_t r = s_wifi_reason;
     const char *why = "could not connect";
-    if (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+    if (s_wifi_auth_failed || r == WIFI_REASON_AUTH_FAIL ||
+        r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
         why = "wrong password?";
     } else if (r == WIFI_REASON_NO_AP_FOUND) {
         why = "network not found";
@@ -457,6 +466,7 @@ void app_main(void)
     } else {
         const panel_cfg_t *cfg = panel_cfg_get();
         s_wifi_reason = 0;
+        s_wifi_auth_failed = false;
         net_wifi_connect(cfg->wifi_ssid, cfg->wifi_pass);
         fw_update_init();                   /* confirma o slot (rollback) e checa 1x/dia */
         if (!wait_for_ip(30000)) {
