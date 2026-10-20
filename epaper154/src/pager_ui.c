@@ -353,7 +353,9 @@ static void draw_main(time_t now)
         if (first + i == s_focus) epd_fb_invert_rect(0, y, EPD_W, ROW_H - 1);
     }
     if (s_row_count > visible) {
-        snprintf(line, sizeof(line), "+%d more", s_row_count - visible);
+        /* "sessions" para não colidir com o "+N more: PWR to cycle" da banda,
+           que conta quem espera, não linhas escondidas */
+        snprintf(line, sizeof(line), "+%d more sessions", s_row_count - visible);
         draw_text(34, LIST_Y + visible * ROW_H + 4, line, 20, 1);
     }
 
