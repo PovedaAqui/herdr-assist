@@ -329,10 +329,18 @@ static void draw_main(time_t now)
     }
     epd_fb_hline(0, LIST_Y - 2, EPD_W, true);
 
-    /* lista: seis linhas; se houver mais, a última vira "+N more" */
+    /* lista: seis linhas; se houver mais, a última vira "+N more".
+       A janela rola junto com o foco: sem isso, com mais sessões que linhas o
+       PWR levava o foco para fora da tela e não dava para ver qual estava
+       selecionado — justamente o que o pager precisa dizer. */
     int visible = s_row_count <= ROWS_MAX ? s_row_count : ROWS_MAX - 1;
+    int first = 0;
+    if (s_focus >= visible) {
+        first = s_focus - visible + 1;
+        if (first + visible > s_row_count) first = s_row_count - visible;
+    }
     for (int i = 0; i < visible; i++) {
-        const row_t *r = &s_rows[i];
+        const row_t *r = &s_rows[first + i];
         int y = LIST_Y + i * ROW_H;
         char age[8];
         draw_mark(4, y + 4, r->status);
@@ -342,9 +350,9 @@ static void draw_main(time_t now)
         int max_proj = age[0] ? 22 : 27;
         draw_text(34, y + 4, r->project, max_proj, 1);
         if (age[0]) draw_text_right(EPD_W - 4, y + 4, age, 1);
-        if (i == s_focus) epd_fb_invert_rect(0, y, EPD_W, ROW_H - 1);
+        if (first + i == s_focus) epd_fb_invert_rect(0, y, EPD_W, ROW_H - 1);
     }
-    if (s_row_count > ROWS_MAX) {
+    if (s_row_count > visible) {
         snprintf(line, sizeof(line), "+%d more", s_row_count - visible);
         draw_text(34, LIST_Y + visible * ROW_H + 4, line, 20, 1);
     }

@@ -204,6 +204,25 @@ static void test_ui(void)
     CHECK(ink(0, 200 - 1, 200, 1) == 0, "nada desenhado na última linha (margem)");
     dump("05-full-list-muted-update");
 
+    /* três esperando ao mesmo tempo, com mais sessões que linhas */
+    strcpy(g_agents[3].status, "blocked"); g_agents[3].since = 0; g_gen++;   /* p4 */
+    pager_ui_render(now);
+    CHECK(pager_ui_waiting() == 3, "três esperando ao mesmo tempo");
+    CHECK(ink(0, 21, 200, 57) > 5000, "a banda de alerta continua invertida com três esperando");
+    CHECK(pager_ui_answer_target(NULL, tgt, sizeof(tgt), NULL, 0) && !strcmp(tgt, "p1"),
+          "com três esperando, o alvo do BOOT é o primeiro da lista");
+
+    /* o PWR percorre a lista inteira e o foco tem de continuar visível */
+    for (int i = 0; i < g_n; i++) {
+        pager_ui_focus_next();
+        pager_ui_render(now);
+        int inv = 0;
+        for (int r = 0; r < 5; r++) {
+            if (ink(0, 80 + r * 16, 200, 15) > 2000) inv++;
+        }
+        CHECK(inv == 1, "com mais sessões que linhas, exatamente uma linha focada aparece");
+    }
+
     /* ponte fora */
     g_n = 0; g_gen++; g_conn = HERDR_CONN_OFFLINE;
     pager_ui_set_flags(true, false, false);
