@@ -1450,6 +1450,11 @@ class DiscoveryResponder(asyncio.DatagramProtocol):
     assina o ip/port que o painel deve adotar (nunca o remetente do datagrama,
     para um vizinho não conseguir redirecionar o painel por relay).
     Só escuta broadcast de verdade com BRIDGE_BIND no default 0.0.0.0.
+
+    E a máquina precisa deixar entrar UDP na BRIDGE_PORT: no Windows com WSL o
+    Hyper-V firewall bloqueia entrada por padrão (é outra regra, não o firewall
+    comum), e sem ela a ponte sobe, escuta e o painel nunca a encontra — fica em
+    OFFLINE sem erro nenhum do lado da ponte.
     """
 
     RATE_MAX = 10       # respostas por janela de 1s (higiene anti-amplificação)

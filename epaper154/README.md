@@ -4,8 +4,10 @@ Um **pager** para o Herdr: uma tela de e-paper de 1,54" que mostra qual agente
 está esperando por você, toca um sino quando um deles para para pedir uma
 decisão e deixa responder com dois botões — sem abrir terminal nenhum.
 
-É o mesmo herdr-assist do painel de 3,5": a mesma ponte (sem nenhuma mudança),
-o mesmo protocolo, o mesmo pareamento e o mesmo OTA. O que muda é a cara: em
+É o mesmo herdr-assist do painel de 3,5": a mesma ponte, o mesmo protocolo, o
+mesmo pareamento e o mesmo OTA. A ponte ganhou só o que o pager precisava: o
+nome do agente vem do rótulo da aba e, opcionalmente (`BRIDGE_MACHINES`), os
+agentes das máquinas SSH salvas entram no mesmo snapshot. O que muda é a cara: em
 200×200 monocromático não cabe terminal, então o device faz uma coisa só, e faz
 bem.
 
@@ -94,6 +96,23 @@ pio device monitor
    conectado.
 
 Pronto: a tela passa a listar as sessões do Herdr.
+
+> **Descoberta e firewall.** O pareamento grava o host **sem endereço fixo**: a
+> cada reconexão o pager pergunta por broadcast (UDP, na porta da ponte) e adota o
+> IP que a ponte assina com o token — então o DHCP do roteador pode trocar o
+> endereço do computador sem quebrar nada. Em troca, a máquina da ponte precisa
+> aceitar **TCP e UDP** nessa porta (9375 por padrão): TCP é a conexão do painel,
+> UDP é a descoberta. No Windows com WSL o firewall comum não basta — o Hyper-V
+> firewall bloqueia entrada por padrão e é outra regra:
+>
+> ```powershell
+> New-NetFirewallHyperVRule -Name "herdr-assist" -Direction Inbound -Protocol TCP -LocalPorts 9375 -Action Allow
+> New-NetFirewallHyperVRule -Name "herdr-assist-udp" -Direction Inbound -Protocol UDP -LocalPorts 9375 -Action Allow
+> ```
+>
+> Sem a regra UDP a ponte sobe e escuta, mas o pager simplesmente não a encontra
+> (fica `OFFLINE`); sem a TCP ele encontra e não conecta. Broadcast não cruza
+> roteador: para um pager fora do mesmo segmento, pareie com um endereço fixo.
 
 ## Os dois botões
 
