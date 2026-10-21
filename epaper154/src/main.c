@@ -66,6 +66,9 @@ static const char *TAG = "pager";
 /* último motivo de queda do STA: é o que separa "senha errada" de "rede fora
    do ar" na tela de erro — sem ele o pager ficava mudo e offline para sempre */
 static volatile uint8_t s_wifi_reason;
+/* Quando começou a janela de "offline demais" (0 = conta a partir de agora).
+   Fica no escopo do arquivo porque o botão que acorda precisa reiniciá-la. */
+static int64_t s_offline_since;
 /* senha errada aparece como AUTH_FAIL, mas a re-tentativa seguinte pode cair
    em NO_AP_FOUND e sobrescrever o motivo; isto guarda o que já foi visto */
 static volatile bool s_wifi_auth_failed;
@@ -216,7 +219,10 @@ static void handle_button(const btn_evt_t *e)
     if (e->id == BTN_PWR && e->kind == BTN_HOLD) { power_off(); return; }
 
     if (scr == UI_SLEEP) {
-        /* qualquer botão acorda: tenta de novo na hora, sem esperar backoff */
+        /* qualquer botão acorda: tenta de novo na hora, sem esperar backoff.
+           A janela de "offline demais" recomeça — sem isso a condição antiga
+           continua valendo e a tela volta para o avatar no mesmo segundo. */
+        s_offline_since = 0;
         herdr_conn_wake();
         pager_ui_set_screen(UI_MAIN);
         show_now(true);
@@ -295,7 +301,6 @@ static void ui_task(void *arg)
     bool was_online = false, baseline_pending = true;
     uint32_t last_gen = 0;
     int64_t status_until = 0, next_batt = 0;
-    int64_t offline_since = 0;
     int low_batt = 0;
     bool rtc_saved = false;
     ui_screen_t last_screen = pager_ui_screen();
@@ -324,10 +329,10 @@ static void ui_task(void *arg)
                 if (herdr_model_get_conn(i) == HERDR_CONN_ONLINE) { any = true; break; }
             }
             if (any) {
-                offline_since = 0;
-            } else if (!offline_since) {
-                offline_since = t_us;
-            } else if (t_us - offline_since > SLEEP_AFTER_US) {
+                s_offline_since = 0;
+            } else if (!s_offline_since) {
+                s_offline_since = t_us;
+            } else if (t_us - s_offline_since > SLEEP_AFTER_US) {
                 herdr_conn_suspend(true);
                 pager_ui_set_screen(UI_SLEEP);
                 show_now(true);
