@@ -300,7 +300,22 @@ static void draw_main(time_t now)
 
     /* banda de alerta */
     char line[40], tag[3];
-    if (s_waiting > 0) {
+    if (!any_online()) {
+        /* Sem ponte nada aqui é ao vivo: a lista é o último retrato. Dizer
+           "ALL CLEAR" nessa hora era mentira — e prometer BOOT/PWR também,
+           porque os comandos não têm para onde ir. */
+        draw_text_center(ALERT_Y + 10, s_row_count ? "OFFLINE" : "NO BRIDGE", 15, 2);
+        if (s_row_count) {
+            if (s_waiting > 0) {
+                snprintf(line, sizeof(line), "last state: %d waiting", s_waiting);
+            } else {
+                snprintf(line, sizeof(line), "last state, not live");
+            }
+        } else {
+            snprintf(line, sizeof(line), "waiting for herdr-assist");
+        }
+        draw_text_center(ALERT_Y + 34, line, 30, 1);
+    } else if (s_waiting > 0) {
         epd_fb_rect(0, ALERT_Y, EPD_W, ALERT_H, true);
         s_ink = false;
         snprintf(line, sizeof(line), "%d WAITING", s_waiting);
@@ -359,7 +374,9 @@ static void draw_main(time_t now)
         draw_text(34, LIST_Y + visible * ROW_H + 4, line, 20, 1);
     }
 
-    draw_footer(s_waiting > 0 ? "PWR next  BOOT enter" : "PWR select  BOOT-hold mute", true);
+    draw_footer(!any_online() ? "offline - last state shown"
+                              : (s_waiting > 0 ? "PWR next  BOOT enter"
+                                               : "PWR select  BOOT-hold mute"), true);
 }
 
 static void draw_title(const char *t)

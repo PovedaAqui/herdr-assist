@@ -232,6 +232,13 @@ static void test_ui(void)
     pager_ui_set_status("bridge unreachable");
     pager_ui_render(0);
     dump("06-no-bridge");
+
+    /* a ponte cai, mas o último retrato continua na lista: a banda não pode
+       dizer ALL CLEAR nem prometer BOOT — nada daquilo é ao vivo */
+    g_n = 3; g_gen++;
+    pager_ui_render(now);
+    dump("06b-offline-with-rows");
+    g_n = 0; g_gen++;
     g_conn = HERDR_CONN_ONLINE;
 
     pager_ui_set_screen(UI_SETUP);
