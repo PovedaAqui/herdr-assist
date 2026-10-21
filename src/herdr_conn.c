@@ -1,7 +1,10 @@
 #include "herdr_conn.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -41,6 +44,12 @@ static const char *TAG = "herdr_conn";
    que o ping saia no prazo, já que com push o silêncio é o estado normal. */
 #define RECV_TIMEOUT_S  5
 #define RECONNECT_MS    3000
+/* Teto de uma tentativa de conexão. connect() bloqueante fica preso no
+   retry de SYN do kernel (~2 min) quando o endereço descarta em vez de
+   recusar — máquina desligada atrás de firewall, IP que saiu da rede. Nesse
+   tempo a task não tenta mais nada, não faz ping e nem percebe a ponte
+   voltar. 5 s é folgado para uma LAN. */
+#define CONNECT_TIMEOUT_S 5
 /* Teto do backoff de conexão. Sem ele, ponte fora do ar = uma tentativa a
    cada 3 s para sempre, cada uma acordando o rádio — num device a bateria
    isso é o gasto dominante, e descobrir a ponte 1 min depois custa pouco. */
@@ -483,9 +492,33 @@ static int connect_bridge(const panel_host_t *hc)
         return -1;
     }
     int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock >= 0 && connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
-        close(sock);
-        sock = -1;
+    if (sock >= 0) {
+        /* connect não bloqueante + select: uma tentativa nunca passa de
+           CONNECT_TIMEOUT_S, então o backoff é quem manda no ritmo */
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        int rc = connect(sock, res->ai_addr, res->ai_addrlen);
+        if (rc != 0 && errno == EINPROGRESS) {
+            fd_set wf;
+            FD_ZERO(&wf);
+            FD_SET(sock, &wf);
+            struct timeval tv = { .tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0 };
+            rc = select(sock + 1, NULL, &wf, NULL, &tv);
+            if (rc > 0) {
+                int err = 0;
+                socklen_t len = sizeof(err);
+                rc = (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0)
+                     ? 0 : -1;
+            } else {
+                rc = -1;                 /* timeout ou select falhou */
+            }
+        }
+        if (rc == 0) {
+            fcntl(sock, F_SETFL, flags);  /* o recv usa SO_RCVTIMEO */
+        } else {
+            close(sock);
+            sock = -1;
+        }
     }
     freeaddrinfo(res);
     if (sock < 0) {
