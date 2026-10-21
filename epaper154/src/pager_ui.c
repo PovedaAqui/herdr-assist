@@ -513,25 +513,27 @@ static void draw_sleep(void)
  * (64 px = 8 bytes) para poder pular com memcmp. */
 #define CLOCK_W_BYTES 8
 
-static bool frame_differs(void)
+/* Quantos bytes do quadro mudaram. O peso decide o tipo de refresh: a hora e a
+ * idade de uma sessão mexem em poucos bytes e vão de parcial (LUT "keep", que
+ * não dirige os pixels parados — sem pisca e sem acinzentar); uma linha
+ * invertida, a banda ou uma tela nova mexem em centenas e vão de total.
+ * 256 bytes é ~5% de um quadro de 5000: cabe a hora + uma idade, não cabe
+ * nem uma inversão de linha (200 px × 16 linhas = 400 bytes). */
+#define UI_PARTIAL_MAX_BYTES 256
+
+static int frame_diff_bytes(void)
 {
-    if (!s_have_last) return true;
     const uint8_t *a = s_last_frame;
     const uint8_t *b = epd_fb();
-    const int stride = EPD_W / 8;
-    for (int y = 0; y < EPD_H; y++) {
-        const int off = y * stride;
-        if (y < TOP_H) {
-            if (memcmp(a + off + CLOCK_W_BYTES, b + off + CLOCK_W_BYTES,
-                       stride - CLOCK_W_BYTES)) return true;
-        } else if (memcmp(a + off, b + off, stride)) {
-            return true;
-        }
+    int n = 0;
+    for (int i = 0; i < EPD_FB_BYTES; i++) {
+        uint8_t x = (uint8_t)(a[i] ^ b[i]);
+        for (; x; x &= (uint8_t)(x - 1)) n++;
     }
-    return false;
+    return n;
 }
 
-bool pager_ui_render(time_t now)
+ui_frame_t pager_ui_render(time_t now)
 {
     snapshot_model();
     epd_fb_clear();
@@ -543,12 +545,19 @@ bool pager_ui_render(time_t now)
     case UI_SLEEP:   draw_sleep(); break;
     default:         draw_main(now); break;
     }
-    bool changed = frame_differs();
-    if (changed) {
+    ui_frame_t what = UI_FRAME_NONE;
+    if (!s_have_last) {
+        what = UI_FRAME_FULL;
+    } else {
+        int d = frame_diff_bytes();
+        if (d > UI_PARTIAL_MAX_BYTES) what = UI_FRAME_FULL;
+        else if (d > 0) what = UI_FRAME_PARTIAL;
+    }
+    if (what != UI_FRAME_NONE) {
         memcpy(s_last_frame, epd_fb(), EPD_FB_BYTES);
         s_have_last = true;
     }
-    return changed;
+    return what;
 }
 
 void pager_ui_invalidate(void) { s_have_last = false; }

@@ -43,7 +43,20 @@ void pager_ui_set_flags(bool wifi_up, bool muted, bool update_available);
 void pager_ui_set_battery(int pct);
 
 /* now = 0 quando o relógio ainda não é confiável (mostra --:--). */
-bool pager_ui_render(time_t now);
+/* O que mudou desde o último quadro, e com que peso:
+ *   UI_FRAME_NONE    — nada (o vidro fica quieto)
+ *   UI_FRAME_PARTIAL — pouca coisa (hora, idade de uma sessão): refresh parcial
+ *                      com o LUT "keep", que não dirige os pixels parados, então
+ *                      não acinzenta nem pisca
+ *   UI_FRAME_FULL    — conteúdo de verdade (linha invertida, banda, tela nova):
+ *                      refresh total, LUT de fábrica, imagem nítida */
+typedef enum {
+    UI_FRAME_NONE = 0,
+    UI_FRAME_PARTIAL = 1,
+    UI_FRAME_FULL = 2,
+} ui_frame_t;
+
+ui_frame_t pager_ui_render(time_t now);
 /* o vidro recusou o último quadro: o próximo render devolve true mesmo que a
  * imagem seja igual, para a tela ser reescrita */
 void pager_ui_invalidate(void);

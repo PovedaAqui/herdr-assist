@@ -99,8 +99,14 @@ static bool has_host(void)
 static void show_now(bool full)
 {
     time_t now = rtc_clock_system_valid() ? time(NULL) : 0;
-    bool went = pager_ui_render(now);
-    if ((went || full) && !epd_bsp_flush(full)) pager_ui_invalidate();
+    ui_frame_t what = pager_ui_render(now);
+    /* total para conteúdo (LUT de fábrica, nítido), parcial para a hora (LUT
+       "keep", sem pisca e sem acinzentar o resto) */
+    if (full || what == UI_FRAME_FULL) {
+        if (!epd_bsp_flush(true)) pager_ui_invalidate();
+    } else if (what == UI_FRAME_PARTIAL) {
+        if (!epd_bsp_flush(false)) pager_ui_invalidate();
+    }
 }
 
 static void say(const char *title, const char *l1, const char *l2)
@@ -380,7 +386,7 @@ static void ui_task(void *arg)
 
         ui_screen_t scr = pager_ui_screen();
         time_t now = rtc_clock_system_valid() ? time(NULL) : 0;
-        bool changed = pager_ui_render(now);
+        ui_frame_t what = pager_ui_render(now);
         uint32_t gen = herdr_model_generation();
         if (online && gen != last_gen) {
             int w = pager_ui_waiting();
@@ -389,9 +395,15 @@ static void ui_task(void *arg)
             prev_waiting = w;
         }
         last_gen = gen;
-        /* troca de tela = refresh total; se o vidro recusou, invalida para
-           tentar de novo em vez de achar que a tela está atualizada */
-        if (changed && !epd_bsp_flush(scr != last_screen)) pager_ui_invalidate();
+        /* troca de tela e conteúdo = refresh total; a hora = parcial. Se o
+           vidro recusou, invalida para tentar de novo em vez de achar que a
+           tela está atualizada */
+        bool screen_changed = scr != last_screen;
+        if (screen_changed || what == UI_FRAME_FULL) {
+            if (!epd_bsp_flush(true)) pager_ui_invalidate();
+        } else if (what == UI_FRAME_PARTIAL) {
+            if (!epd_bsp_flush(false)) pager_ui_invalidate();
+        }
         last_screen = scr;
 
         if (s_sntp_synced && !rtc_saved) rtc_saved = rtc_clock_save();

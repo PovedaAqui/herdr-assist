@@ -45,12 +45,12 @@ static SemaphoreHandle_t s_done;
 /* durante o refresh o BUSY precisa acordar a CPU: sem light sleep até ele cair */
 static esp_pm_lock_handle_t s_pm_lock;
 static bool s_ready;
-/* Refresh rápido DESLIGADO: no vidro ele desbotava mesmo com a imagem anterior
- * na RAM vermelha, e uma tela que apaga aos poucos não serve para um pager. Tudo
- * sai pela LUT de fábrica (~1,4 s, com o pisca), que devolve a imagem nítida
- * sempre. O caminho rápido fica aqui para quando houver bancada. */
+/* Refresh parcial (o do relógio) usa o LUT "keep", não o rápido comum: o
+ * rápido dirige todos os pixels e acinzenta o branco a cada passo; o "keep"
+ * só mexe em quem mudou. O total (LUT de fábrica, ~1,4 s) continua sendo o
+ * caminho de qualquer mudança de conteúdo. */
 #ifndef EPD_FAST_REFRESH
-#define EPD_FAST_REFRESH 0
+#define EPD_FAST_REFRESH 1
 #endif
 
 static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
@@ -140,7 +140,7 @@ bool epd_bsp_flush(bool full)
         esp_lcd_panel_disp_on_off(s_panel, true);     /* volta à LUT da OTP */
         s_fast_lut = false;
     } else if (!full && !s_fast_lut) {
-        epaper_panel_set_custom_lut(s_panel, SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH, 159);
+        epaper_panel_set_custom_lut(s_panel, SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH_KEEP, 159);
         s_fast_lut = true;
     }
 

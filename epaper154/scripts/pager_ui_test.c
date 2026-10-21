@@ -329,10 +329,13 @@ static void test_single_row(void)
     g_n = 0;
     add("p1", "omp", "solo", "idle", 0);
     CHECK(pager_ui_render(now), "estado idle: muda");
-    CHECK(!pager_ui_render(now + 60), "só o relógio mudou: nada de refresh");
-    CHECK(!pager_ui_render(now + 120), "e continua quieto nos minutos seguintes");
-    strcpy(g_agents[0].status, "working"); g_agents[0].since = (uint32_t)now - 30; g_gen++;
-    CHECK(pager_ui_render(now + 180), "mudou o conteúdo: aí sim repinta (e o relógio vem junto)");
+    CHECK(pager_ui_render(now + 60) == UI_FRAME_PARTIAL, "só o relógio: refresh parcial (sem pisca)");
+    CHECK(pager_ui_render(now + 120) == UI_FRAME_PARTIAL, "e de novo no minuto seguinte");
+    CHECK(pager_ui_render(now + 180) == UI_FRAME_PARTIAL,
+          "idade de sessão sozinha também é mudança pequena: parcial");
+    strcpy(g_agents[0].status, "blocked"); g_agents[0].since = 0; g_gen++;
+    CHECK(pager_ui_render(now + 240) == UI_FRAME_FULL,
+          "banda de espera invertida é mudança grande: refresh total");
 }
 
 int main(int argc, char **argv)
