@@ -248,6 +248,11 @@ static void test_ui(void)
     pager_ui_set_message("HERDR PAGER", "herdr-assist v0.13.0 (epaper154)", "starting Wi-Fi...");
     pager_ui_render(now);
     dump("09-boot");
+
+    /* descanso: ponte fora do ar, avatar até alguém apertar um botão */
+    pager_ui_set_screen(UI_SLEEP);
+    CHECK(pager_ui_render(now), "tela de descanso muda");
+    dump("10-sleep");
 }
 
 /* ---------------------------------------------------------------- portal */

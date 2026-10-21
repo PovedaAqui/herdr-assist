@@ -26,6 +26,7 @@ typedef enum {
     UI_SETUP,      /* ponto de acesso do Wi-Fi aberto */
     UI_PAIRING,    /* janela de pareamento com o host */
     UI_MESSAGE,    /* título + duas linhas (boot, erro, reinício) */
+    UI_SLEEP,      /* descanso: ponte fora do ar, avatar até um botão */
 } ui_screen_t;
 
 void pager_ui_set_screen(ui_screen_t screen);

@@ -447,6 +447,35 @@ void pager_ui_set_flags(bool wifi_up, bool muted, bool update_available)
     s_update = update_available;
 }
 
+/* ---------------------------------------------------------------- descanso */
+/* Sem arte externa em 1 bit: o avatar é desenhado — um mascote dormindo.
+   Disco cheio, e os traços do rosto em branco por cima dele. */
+static void fill_disc(int cx, int cy, int r, bool black)
+{
+    for (int y = -r; y <= r; y++) {
+        int w = 0;
+        while ((w + 1) * (w + 1) + y * y <= r * r) {
+            w++;
+        }
+        if (w > 0) {
+            epd_fb_hline(cx - w, cy + y, 2 * w, black);
+        }
+    }
+}
+
+static void draw_sleep(void)
+{
+    fill_disc(100, 76, 50, true);
+    epd_fb_rect(72, 62, 20, 3, false);      /* olhos fechados */
+    epd_fb_rect(108, 62, 20, 3, false);
+    epd_fb_rect(88, 92, 24, 3, false);      /* boca */
+    draw_text(152, 16, "z", 1, 3);
+    draw_text(168, 42, "z", 1, 2);
+    draw_text(180, 56, "z", 1, 1);
+    draw_text_center(136, "OFFLINE", 10, 2);
+    draw_text_center(162, "press PWR to retry", 20, 1);
+}
+
 bool pager_ui_render(time_t now)
 {
     snapshot_model();
@@ -456,6 +485,7 @@ bool pager_ui_render(time_t now)
     case UI_SETUP:   draw_setup(); break;
     case UI_PAIRING: draw_pairing(); break;
     case UI_MESSAGE: draw_message(); break;
+    case UI_SLEEP:   draw_sleep(); break;
     default:         draw_main(now); break;
     }
     bool changed = !s_have_last || memcmp(s_last_frame, epd_fb(), EPD_FB_BYTES) != 0;

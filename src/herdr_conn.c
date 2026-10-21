@@ -88,6 +88,7 @@ typedef struct {
     uint8_t disc_fails;        /* falhas seguidas de descoberta (backoff) */
     uint8_t conn_fails;        /* falhas seguidas de conexão (backoff) */
     uint8_t wifi_fails;        /* esperas seguidas sem Wi-Fi (backoff) */
+    TaskHandle_t task;         /* para o botão acordar o backoff na hora */
     char bridge_ver[16];       /* versão que a ponte anunciou no handshake */
 } conn_slot_t;
 
@@ -647,10 +648,34 @@ static bool discover_slot(conn_slot_t *s)
 }
 
 static uint32_t s_retry_cap_ms = RETRY_CAP_MS;
+static volatile bool s_suspended;   /* dormindo na tela de avatar */
 
 void herdr_conn_set_retry_cap_ms(uint32_t ms)
 {
     s_retry_cap_ms = ms < RECONNECT_MS ? RECONNECT_MS : ms;
+}
+
+/* Acorda as tasks do delay em que estiverem: sem isso um suspend/wake só seria
+   notado no fim do backoff, que pode ser 60 s. */
+static void notify_slots(void)
+{
+    for (int i = 0; i < CFG_MAX_HOSTS; i++) {
+        if (s_slots[i].used && s_slots[i].task) {
+            xTaskNotifyGive(s_slots[i].task);
+        }
+    }
+}
+
+void herdr_conn_suspend(bool on)
+{
+    s_suspended = on;
+    notify_slots();
+}
+
+void herdr_conn_wake(void)
+{
+    s_suspended = false;
+    notify_slots();
 }
 
 /* base dobrando a cada falha, com teto. */
@@ -666,11 +691,20 @@ static uint32_t backoff_ms(uint8_t fails, uint32_t base, uint32_t cap)
 static void conn_task(void *arg)
 {
     conn_slot_t *s = arg;
+    s->task = xTaskGetCurrentTaskHandle();
     while (true) {
+        if (s_suspended) {
+            /* tela de descanso: nada de rádio até um botão */
+            herdr_model_set_conn(s->idx, HERDR_CONN_OFFLINE);
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            s->conn_fails = 0;
+            s->disc_fails = 0;
+            s->addr_ok = false;
+        }
         while (!net_wifi_is_up()) {
             herdr_model_set_conn(s->idx, HERDR_CONN_OFFLINE);
-            vTaskDelay(pdMS_TO_TICKS(backoff_ms(s->wifi_fails, WIFI_POLL_MIN_MS,
-                                                WIFI_POLL_MAX_MS)));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(backoff_ms(s->wifi_fails,
+                            WIFI_POLL_MIN_MS, WIFI_POLL_MAX_MS)));
             if (s->wifi_fails < FAILS_MAX) {
                 s->wifi_fails++;      /* sem Wi-Fi: não adianta acordar de 1 em 1 s */
             }
@@ -695,7 +729,7 @@ static void conn_task(void *arg)
                     ESP_LOGW(TAG, "[%s] %u sondas sem resposta; recuando para %lums",
                              s->label, s->disc_fails, (unsigned long)d);
                 }
-                vTaskDelay(pdMS_TO_TICKS(d));
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(d));
                 continue;
             }
         }
@@ -716,7 +750,7 @@ static void conn_task(void *arg)
                 ESP_LOGW(TAG, "[%s] %u tentativas sem conexão; recuando para %lums",
                          s->label, s->conn_fails, (unsigned long)d);
             }
-            vTaskDelay(pdMS_TO_TICKS(d));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(d));
             continue;
         }
         xSemaphoreTake(s->tx_mutex, portMAX_DELAY);
@@ -739,8 +773,8 @@ static void conn_task(void *arg)
             if (s->conn_fails < FAILS_MAX) {
                 s->conn_fails++;
             }
-            vTaskDelay(pdMS_TO_TICKS(backoff_ms(s->conn_fails, RECONNECT_MS,
-                                                s_retry_cap_ms)));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(backoff_ms(s->conn_fails, RECONNECT_MS,
+                                                             s_retry_cap_ms)));
             continue;
         }
 

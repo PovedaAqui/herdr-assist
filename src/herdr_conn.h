@@ -49,6 +49,12 @@ const char *herdr_conn_bridge_version(int host);
    custa mais do que a latência de reconectar um ou dois minutos depois. */
 void herdr_conn_set_retry_cap_ms(uint32_t ms);
 
+/* Suspende as tentativas (bateria) e só volta com herdr_conn_wake().
+   Usado pela tela de descanso: parado, nada acorda o rádio até alguém
+   apertar um botão. */
+void herdr_conn_suspend(bool on);
+void herdr_conn_wake(void);
+
 /* Comandos painel→ponte, roteados pelo índice do host em panel_cfg.
    Retornam ESP_FAIL se o host não estiver conectado. */
 /* cols/rows são a geometria da tela do painel: enquanto ele estiver lendo este

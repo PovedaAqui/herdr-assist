@@ -79,6 +79,9 @@ static char s_status[40];
 /* sobrevive ao esp_restart (não ao corte de energia): "suba direto no setup"
  * sem apagar o Wi-Fi salvo — cancelar o setup volta à rede de antes */
 #define SETUP_MAGIC 0x5e7a95e7u
+/* Ponte fora do ar por este tempo e o pager descansa no avatar: para de
+   tentar (bateria) e só volta a procurar quando alguém aperta um botão. */
+#define SLEEP_AFTER_US  (120 * 1000000LL)
 RTC_NOINIT_ATTR static uint32_t s_boot_into_setup;
 
 /* ------------------------------------------------------------ utilidades */
@@ -212,6 +215,14 @@ static void handle_button(const btn_evt_t *e)
 
     if (e->id == BTN_PWR && e->kind == BTN_HOLD) { power_off(); return; }
 
+    if (scr == UI_SLEEP) {
+        /* qualquer botão acorda: tenta de novo na hora, sem esperar backoff */
+        herdr_conn_wake();
+        pager_ui_set_screen(UI_MAIN);
+        show_now(true);
+        return;
+    }
+
     if (scr == UI_PAIRING) {
         if (e->id == BTN_PWR && (e->kind == BTN_LONG || e->kind == BTN_SHORT) &&
             pairing_state() != PAIRING_WAITING) start_pairing();
@@ -284,6 +295,7 @@ static void ui_task(void *arg)
     bool was_online = false, baseline_pending = true;
     uint32_t last_gen = 0;
     int64_t status_until = 0, next_batt = 0;
+    int64_t offline_since = 0;
     int low_batt = 0;
     bool rtc_saved = false;
     ui_screen_t last_screen = pager_ui_screen();
@@ -303,6 +315,24 @@ static void ui_task(void *arg)
         }
         int64_t t_us = esp_timer_get_time();
         if (status_until && t_us > status_until) { s_status[0] = '\0'; status_until = 0; }
+
+        /* ninguém online por tempo demais: descansa no avatar. O rádio para de
+           tentar — é o que segura a bateria quando não há nada para mostrar. */
+        if (s_conn_started && pager_ui_screen() == UI_MAIN) {
+            bool any = false;
+            for (int i = 0; i < CFG_MAX_HOSTS; i++) {
+                if (herdr_model_get_conn(i) == HERDR_CONN_ONLINE) { any = true; break; }
+            }
+            if (any) {
+                offline_since = 0;
+            } else if (!offline_since) {
+                offline_since = t_us;
+            } else if (t_us - offline_since > SLEEP_AFTER_US) {
+                herdr_conn_suspend(true);
+                pager_ui_set_screen(UI_SLEEP);
+                show_now(true);
+            }
+        }
 
         if (t_us >= next_batt) {
             next_batt = t_us + 30 * 1000000LL;
