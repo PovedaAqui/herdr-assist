@@ -111,6 +111,9 @@ static void say(const char *title, const char *l1, const char *l2)
 
 static void on_button(btn_id_t id, btn_kind_t kind)
 {
+    static const char *IDS[] = { "PWR", "BOOT", "BOTH" };
+    static const char *KINDS[] = { "short", "long", "hold", "chord" };
+    ESP_LOGI(TAG, "botão: %s %s", IDS[id], KINDS[kind]);
     btn_evt_t e = { id, kind };
     xQueueSend(s_btn_q, &e, 0);
 }
