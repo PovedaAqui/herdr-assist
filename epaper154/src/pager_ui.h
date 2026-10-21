@@ -43,13 +43,15 @@ void pager_ui_set_flags(bool wifi_up, bool muted, bool update_available);
 void pager_ui_set_battery(int pct);
 
 /* now = 0 quando o relógio ainda não é confiável (mostra --:--). */
-/* O que mudou desde o último quadro, e com que peso:
+/* O que mudou desde o último quadro:
  *   UI_FRAME_NONE    — nada (o vidro fica quieto)
- *   UI_FRAME_PARTIAL — pouca coisa (hora, idade de uma sessão): refresh parcial
- *                      com o LUT "keep", que não dirige os pixels parados, então
- *                      não acinzenta nem pisca
- *   UI_FRAME_FULL    — conteúdo de verdade (linha invertida, banda, tela nova):
- *                      refresh total, LUT de fábrica, imagem nítida */
+ *   UI_FRAME_PARTIAL — qualquer mudança na tela (hora, idade, foco, banda):
+ *                      refresh parcial com o LUT "keep", que só dirige os pixels
+ *                      que mudaram — sem pisca e sem acinzentar o resto
+ *   UI_FRAME_FULL    — só o primeiro quadro, quando não há referência nenhuma
+ *                      para o modo parcial (o total, LUT de fábrica, também é
+ *                      forçado a cada EPD_FAST_BUDGET para limpar fantasma e
+ *                      em troca de tela, ver main.c) */
 typedef enum {
     UI_FRAME_NONE = 0,
     UI_FRAME_PARTIAL = 1,

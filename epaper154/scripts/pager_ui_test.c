@@ -332,10 +332,10 @@ static void test_single_row(void)
     CHECK(pager_ui_render(now + 60) == UI_FRAME_PARTIAL, "só o relógio: refresh parcial (sem pisca)");
     CHECK(pager_ui_render(now + 120) == UI_FRAME_PARTIAL, "e de novo no minuto seguinte");
     CHECK(pager_ui_render(now + 180) == UI_FRAME_PARTIAL,
-          "idade de sessão sozinha também é mudança pequena: parcial");
+          "idade de sessão sozinha: parcial");
     strcpy(g_agents[0].status, "blocked"); g_agents[0].since = 0; g_gen++;
-    CHECK(pager_ui_render(now + 240) == UI_FRAME_FULL,
-          "banda de espera invertida é mudança grande: refresh total");
+    CHECK(pager_ui_render(now + 240) == UI_FRAME_PARTIAL,
+          "banda de espera invertida também é parcial (o total só limpa fantasma)");
 }
 
 int main(int argc, char **argv)
