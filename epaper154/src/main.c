@@ -88,6 +88,13 @@ static char s_status[40];
 RTC_NOINIT_ATTR static uint32_t s_boot_into_setup;
 
 /* ------------------------------------------------------------ utilidades */
+
+/* Modo do vidro: 0 = toda mudança usa o refresh TOTAL (LUT de fábrica), que
+ * sempre devolve a imagem nítida e nunca deixa o painel em estado parcial.
+ * 1 = tenta o parcial/área (mais rápido e sem pisca, mas nesta unidade o
+ * partial-in deixou o vidro em branco e o parcial ia apagando o que não
+ * mudava). Fica atrás da macro para voltar só com bancada. */
+#define PAGER_REFRESH_PARTIAL 0
 static bool has_host(void)
 {
     const panel_cfg_t *cfg = panel_cfg_get();
@@ -102,6 +109,11 @@ static void show_now(bool full)
     ui_frame_t what = pager_ui_render(now);
     /* total para conteúdo (LUT de fábrica, nítido), parcial para a hora (LUT
        "keep", sem pisca e sem acinzentar o resto) */
+#if !PAGER_REFRESH_PARTIAL
+    if (full || what != UI_FRAME_NONE) {
+        if (!epd_bsp_flush(true)) pager_ui_invalidate();
+    }
+#else
     if (full || what == UI_FRAME_FULL) {
         if (!epd_bsp_flush(true)) pager_ui_invalidate();
     } else if (what == UI_FRAME_CLOCK || what == UI_FRAME_STRIPS) {
@@ -113,6 +125,7 @@ static void show_now(bool full)
     } else if (what == UI_FRAME_PARTIAL) {
         if (!epd_bsp_flush(false)) pager_ui_invalidate();
     }
+#endif
 }
 
 static void say(const char *title, const char *l1, const char *l2)
@@ -405,6 +418,11 @@ static void ui_task(void *arg)
            vidro recusou, invalida para tentar de novo em vez de achar que a
            tela está atualizada */
         bool screen_changed = scr != last_screen;
+#if !PAGER_REFRESH_PARTIAL
+        if (screen_changed || what != UI_FRAME_NONE) {
+            if (!epd_bsp_flush(true)) pager_ui_invalidate();
+        }
+#else
         if (screen_changed || what == UI_FRAME_FULL) {
             if (!epd_bsp_flush(true)) pager_ui_invalidate();
         } else if (what == UI_FRAME_CLOCK || what == UI_FRAME_STRIPS) {
@@ -416,6 +434,7 @@ static void ui_task(void *arg)
         } else if (what == UI_FRAME_PARTIAL) {
             if (!epd_bsp_flush(false)) pager_ui_invalidate();
         }
+#endif
         last_screen = scr;
 
         if (s_sntp_synced && !rtc_saved) rtc_saved = rtc_clock_save();
