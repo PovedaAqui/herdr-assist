@@ -294,6 +294,36 @@ static void test_battery(void)
     CHECK(mono, "bateria: a curva nunca sobe quando a tensão cai");
 }
 
+/* uma sessão só: o PWR seleciona a única linha e depois não tem para onde
+ * andar. A tela tem de ficar parada — o rodapé é que troca "next" por "focus" */
+static void test_single_row(void)
+{
+    time_t now = 1760000000;
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    tzset();
+    pager_ui_set_flags(true, false, false);
+    pager_ui_set_battery(87);
+    pager_ui_set_status("online: luis-pc");   /* test_ui deixa outro status */
+    g_conn = HERDR_CONN_ONLINE;
+    pager_ui_set_screen(UI_MAIN);        /* test_ui termina em outra tela */
+
+    g_n = 0;
+    add("p1", "omp", "solo", "working", (uint32_t)now - 60);
+    CHECK(pager_ui_render(now), "com uma linha, a primeira renderização muda");
+
+    char pane[32];
+    CHECK(!pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0),
+          "uma linha trabalhando e sem espera: ainda não há seleção");
+    pager_ui_focus_next();
+    CHECK(pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0) && !strcmp(pane, "p1"),
+          "uma linha: o PWR seleciona a única sessão");
+    CHECK(pager_ui_render(now), "e a linha inverte: a tela muda");
+    pager_ui_focus_next();
+    CHECK(pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0) && !strcmp(pane, "p1"),
+          "uma linha: de novo, o foco continua nela (não há para onde andar)");
+    CHECK(!pager_ui_render(now), "e a tela não redesenha nada");
+}
+
 int main(int argc, char **argv)
 {
     g_dir = argc > 1 ? argv[1] : NULL;
@@ -301,6 +331,7 @@ int main(int argc, char **argv)
     test_portal_form();
     test_battery();
     test_ui();
+    test_single_row();
     printf("%d checks, %d falhas\n", g_pass + g_fail, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -336,7 +336,8 @@ static void draw_main(time_t now)
         draw_text_center(ALERT_Y + 10, "ALL CLEAR", 15, 2);
         int working = 0;
         for (int i = 0; i < s_row_count; i++) if (!strcmp(s_rows[i].status, "working")) working++;
-        snprintf(line, sizeof(line), "%d working / %d sessions", working, s_row_count);
+        snprintf(line, sizeof(line), "%d working / %d %s", working, s_row_count,
+                 s_row_count == 1 ? "session" : "sessions");
         draw_text_center(ALERT_Y + 34, line, 32, 1);
     } else {
         draw_text_center(ALERT_Y + 10, any_online() ? "NO AGENTS" : "NO BRIDGE", 15, 2);
@@ -375,14 +376,17 @@ static void draw_main(time_t now)
     }
 
     /* o rodapé só promete o que funciona: sem sessão na tela não há "select",
-       e sem retrato antigo não há "last state shown" */
+       sem retrato antigo não há "last state shown", e com uma linha só o PWR
+       não anda — ele só manda o foco para essa sessão */
     const char *legend;
     if (!any_online()) {
         legend = s_row_count ? "offline - last state shown" : "offline";
     } else if (s_waiting > 0) {
-        legend = "PWR next  BOOT enter";
-    } else if (s_row_count > 0) {
+        legend = s_row_count > 1 ? "PWR next  BOOT enter" : "PWR focus  BOOT enter";
+    } else if (s_row_count > 1) {
         legend = "PWR select  BOOT-hold mute";
+    } else if (s_row_count > 0) {
+        legend = "PWR focus  BOOT-hold mute";
     } else {
         legend = "BOOT-hold: mute";
     }
