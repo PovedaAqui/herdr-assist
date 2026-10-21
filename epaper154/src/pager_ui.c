@@ -304,7 +304,7 @@ static void draw_main(time_t now)
         /* Sem ponte nada aqui é ao vivo: a lista é o último retrato. Dizer
            "ALL CLEAR" nessa hora era mentira — e prometer BOOT/PWR também,
            porque os comandos não têm para onde ir. */
-        draw_text_center(ALERT_Y + 10, s_row_count ? "OFFLINE" : "NO BRIDGE", 15, 2);
+        draw_text_center(ALERT_Y + 10, "NO BRIDGE", 15, 2);
         if (s_row_count) {
             if (s_waiting > 0) {
                 snprintf(line, sizeof(line), "last state: %d waiting", s_waiting);
@@ -374,9 +374,19 @@ static void draw_main(time_t now)
         draw_text(34, LIST_Y + visible * ROW_H + 4, line, 20, 1);
     }
 
-    draw_footer(!any_online() ? "offline - last state shown"
-                              : (s_waiting > 0 ? "PWR next  BOOT enter"
-                                               : "PWR select  BOOT-hold mute"), true);
+    /* o rodapé só promete o que funciona: sem sessão na tela não há "select",
+       e sem retrato antigo não há "last state shown" */
+    const char *legend;
+    if (!any_online()) {
+        legend = s_row_count ? "offline - last state shown" : "offline";
+    } else if (s_waiting > 0) {
+        legend = "PWR next  BOOT enter";
+    } else if (s_row_count > 0) {
+        legend = "PWR select  BOOT-hold mute";
+    } else {
+        legend = "BOOT-hold: mute";
+    }
+    draw_footer(legend, true);
 }
 
 static void draw_title(const char *t)
