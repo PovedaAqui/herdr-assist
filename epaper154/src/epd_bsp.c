@@ -31,9 +31,15 @@
 
 static const char *TAG = "epd";
 
-/* não existem no header do componente (ele não faz partial window) */
-#define SSD1681_CMD_PARTIAL_IN   0x91
-#define SSD1681_CMD_PARTIAL_OUT  0x92
+/* Comandos que o componente não expõe */
+#define SSD1681_CMD_WRITE_REG_FOR_DISPLAY 0x37
+#define SSD1681_CMD_BORDER_WAVEFORM       0x3C
+#define SSD1681_CMD_END_OPTION            0x3F
+#define SSD1681_CMD_GATE_VOLTAGE          0x03
+#define SSD1681_CMD_SOURCE_VOLTAGE        0x04
+#define SSD1681_CMD_VCOM_REGISTER         0x2C
+#define SSD1681_CMD_MASTER_ACTIVATION     0x20
+#define SSD1681_CMD_UPDATE_CTRL2          0x22
 
 #ifndef EPD_MIRROR_X
 #define EPD_MIRROR_X false
@@ -42,40 +48,21 @@ static const char *TAG = "epd";
 #define EPD_MIRROR_Y false
 #endif
 #define EPD_SPI_HZ        (10 * 1000 * 1000)
-#define EPD_REFRESH_TMO   pdMS_TO_TICKS(6000)
 
 static esp_lcd_panel_handle_t s_panel;
-static esp_lcd_panel_io_handle_t s_io;   /* para o partial-in/out do relógio */
-static SemaphoreHandle_t s_done;
+static esp_lcd_panel_io_handle_t s_io;   /* comandos que o componente não expõe */
 /* durante o refresh o BUSY precisa acordar a CPU: sem light sleep até ele cair */
 static esp_pm_lock_handle_t s_pm_lock;
 static bool s_ready;
-/* Refresh parcial (o do relógio) usa o LUT "keep", não o rápido comum: o
- * rápido dirige todos os pixels e acinzenta o branco a cada passo; o "keep"
- * só mexe em quem mudou. O total (LUT de fábrica, ~1,4 s) continua sendo o
- * caminho de qualquer mudança de conteúdo. */
+/* Atualização parcial ligada: modo parcial do fabricante + 0xCF com a LUT
+ * rápida. O total (LUT da OTP + 0xC7) continua sendo o primeiro quadro, a
+ * troca de tela e a limpeza de fantasma a cada EPD_FAST_BUDGET parciais. */
 #ifndef EPD_FAST_REFRESH
 #define EPD_FAST_REFRESH 1
 #endif
-
-static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
-/* a última imagem que o vidro aceitou: o refresh rápido precisa dela na RAM
- * "vermelha" (0x26), que é a referência do waveform */
-static uint8_t s_painted[EPD_FB_BYTES];
-/* maior área que o relógio usa (64 x TOP_H); embutido para não alocar */
-static uint8_t s_area_old[512];
-static uint8_t s_area_new[512];
 static int  s_fast_count;
 static int  s_flushes;
 static int  s_last_ms;
-
-static bool IRAM_ATTR on_refresh_done(const esp_lcd_panel_handle_t h, const void *edata, void *ctx)
-{
-    (void)h; (void)edata;
-    BaseType_t woken = pdFALSE;
-    xSemaphoreGiveFromISR((SemaphoreHandle_t)ctx, &woken);
-    return woken == pdTRUE;
-}
 
 bool epd_bsp_init(void)
 {
@@ -117,10 +104,7 @@ bool epd_bsp_init(void)
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) ESP_ERROR_CHECK(err);
     ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1681(io, &dev, &s_panel));
 
-    s_done = xSemaphoreCreateBinary();
     esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "epd", &s_pm_lock);
-    epaper_panel_callbacks_t cbs = { .on_epaper_refresh_done = on_refresh_done };
-    epaper_panel_register_event_callbacks(s_panel, &cbs, s_done);
 
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
@@ -138,53 +122,45 @@ bool epd_bsp_init(void)
     return true;
 }
 
-/* Refresco de ÁREA: partial-in (0x91) antes e partial-out (0x92) depois, com a
- * janela do controlador limitada ao retângulo. É o que o relógio usa: sem isso o
- * LUT "keep" é aplicado a todos os pixels e o que não mudou vai apagando aos
- * poucos ("keep previous output"), até o próximo refresh total. O driver não
- * expõe o partial-in, então os dois comandos vão crus pelo IO. */
-bool epd_bsp_flush_area(int x0, int y0, int x1, int y1)
+/* Entra no modo parcial como o EPD_1in54_V2_Init_Partial() do fabricante:
+ * carrega a LUT da atualização rápida, escreve os 10 bytes do 0x37, o 0x3C=0x80
+ * (borda seguindo a LUT) e liga clock/analógico com 0x22=0xC0. Sem esses três
+ * registradores o 0xCF não faz atualização diferencial — foi o que fez o vidro
+ * desbotar e, no caso da janela 0x91, ficar em branco. */
+static bool s_partial_mode;
+
+static bool wait_busy(void)
 {
-    if (!s_ready) return true;
-    const int w = (x1 - x0) / 8, h = y1 - y0;
-    if (w <= 0 || h <= 0 || (size_t)(w * h) > sizeof(s_area_old)) return false;
+    const int64_t t0 = esp_timer_get_time();
+    while (gpio_get_level(BOARD_EPD_BUSY_PIN) && (esp_timer_get_time() - t0) < 6000000)
+        vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(4));                 /* folga, como no exemplo */
+    return gpio_get_level(BOARD_EPD_BUSY_PIN) == 0;
+}
 
-    int64_t t0 = esp_timer_get_time();
-    if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
-    /* o controlador precisa de folga depois que o BUSY cai: emendando um
-     * segundo update de área na sequência ele era ignorado (BUSY nem subia) */
-    vTaskDelay(pdMS_TO_TICKS(60));
+static void epd_cmd(uint8_t cmd, const uint8_t *data, size_t n)
+{
+    esp_lcd_panel_io_tx_param(s_io, cmd, data, n);
+}
 
-    /* empacota a janela: o draw_bitmap copia len_x*len_y/8 bytes a partir do
-     * ponteiro, então não dá para passar o quadro inteiro */
-    const int stride = EPD_W / 8;
-    for (int y = 0; y < h; y++) {
-        memcpy(s_area_old + y * w, s_painted + (y0 + y) * stride + x0 / 8, w);
-        memcpy(s_area_new + y * w, epd_fb() + (y0 + y) * stride + x0 / 8, w);
-    }
+static void enter_partial_mode(void)
+{
+    if (s_partial_mode) return;
+    uint8_t *lut = SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH;
+    epd_cmd(0x32, lut, 153);                      /* LUT do refresh rápido */
+    epd_cmd(SSD1681_CMD_END_OPTION, &lut[153], 1);
+    epd_cmd(SSD1681_CMD_GATE_VOLTAGE, &lut[154], 1);
+    epd_cmd(SSD1681_CMD_SOURCE_VOLTAGE, &lut[155], 3);
+    epd_cmd(SSD1681_CMD_VCOM_REGISTER, &lut[158], 1);
 
-    if (!s_fast_lut) {
-        epaper_panel_set_custom_lut(s_panel, SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH_KEEP, 159);
-        s_fast_lut = true;
-    }
-    esp_lcd_panel_io_tx_param(s_io, SSD1681_CMD_PARTIAL_IN, (uint8_t[]){ 0x00 }, 1);
-    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
-    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, s_area_old);
-    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
-    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, s_area_new);
-    while (xSemaphoreTake(s_done, 0) == pdTRUE) { }   /* drena gives atrasados */
-    epaper_panel_refresh_screen(s_panel);
-    bool ok = xSemaphoreTake(s_done, EPD_REFRESH_TMO) == pdTRUE;
-    esp_lcd_panel_io_tx_param(s_io, SSD1681_CMD_PARTIAL_OUT, NULL, 0);
+    static const uint8_t reg37[10] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00 };
+    epd_cmd(SSD1681_CMD_WRITE_REG_FOR_DISPLAY, reg37, sizeof(reg37));
+    epd_cmd(SSD1681_CMD_BORDER_WAVEFORM, (uint8_t[]){ 0x80 }, 1);
 
-    if (s_pm_lock) esp_pm_lock_release(s_pm_lock);
-    if (ok) memcpy(s_painted, epd_fb(), EPD_FB_BYTES);
-    s_fast_count = ok ? s_fast_count + 1 : s_fast_count;
-    s_flushes++;
-    s_last_ms = (int)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "refresh área (%d,%d)-(%d,%d) em %d ms%s", x0, y0, x1, y1, s_last_ms,
-             ok ? "" : " — NAO PINTou");
-    return ok;
+    epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ 0xC0 }, 1);   /* só liga clock/analógico */
+    epd_cmd(SSD1681_CMD_MASTER_ACTIVATION, NULL, 0);
+    wait_busy();
+    s_partial_mode = true;
 }
 
 bool epd_bsp_flush(bool full)
@@ -194,32 +170,31 @@ bool epd_bsp_flush(bool full)
     if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
     full = full || !EPD_FAST_REFRESH || s_fast_count >= EPD_FAST_BUDGET;
 
-    if (full && s_fast_lut) {
-        esp_lcd_panel_disp_on_off(s_panel, true);     /* volta à LUT da OTP */
-        s_fast_lut = false;
-    } else if (!full && !s_fast_lut) {
-        epaper_panel_set_custom_lut(s_panel, SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH_KEEP, 159);
-        s_fast_lut = true;
+    if (full) {
+        if (s_partial_mode) {
+            esp_lcd_panel_disp_on_off(s_panel, true); /* volta à LUT da OTP */
+            s_partial_mode = false;
+        }
+    } else {
+        enter_partial_mode();
     }
 
-    /* Refresh rápido precisa das DUAS imagens: a anterior na RAM "vermelha"
-     * (0x26), que é a referência do waveform, e a nova na preta (0x24). Sem a
-     * anterior o painel é dirigido contra pixels que nunca mudaram e o vidro
-     * vai desbotando a cada rápido — some a tela sem que nada tenha falhado.
-     * No total a LUT de fábrica reescreve tudo, então a vermelha não entra. */
-    if (!full) {
-        epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
-        esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, s_painted);
-    }
+    /* Como o DisplayPart()/DisplayPartBaseImage() do fabricante: a preta (0x24)
+     * leva sempre a imagem nova; a vermelha (0x26) só é reescrita no refresh
+     * total (ela é a referência do diferencial, e o controlador a atualiza
+     * sozinho ao fim de cada parcial). */
     epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
-    while (xSemaphoreTake(s_done, 0) == pdTRUE) { }   /* drena gives atrasados */
-    epaper_panel_refresh_screen(s_panel);
-    bool ok = xSemaphoreTake(s_done, EPD_REFRESH_TMO) == pdTRUE;
-    if (!ok) ESP_LOGW(TAG, "refresh sem fim de BUSY em %d ms", (int)pdTICKS_TO_MS(EPD_REFRESH_TMO));
+    if (full) {
+        epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
+        esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
+    }
+    epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ full ? 0xC7 : 0xCF }, 1);
+    epd_cmd(SSD1681_CMD_MASTER_ACTIVATION, NULL, 0);
+    bool ok = wait_busy();
+    if (!ok) ESP_LOGW(TAG, "refresh sem fim de BUSY (6 s)");
 
     if (s_pm_lock) esp_pm_lock_release(s_pm_lock);
-    if (ok) memcpy(s_painted, epd_fb(), EPD_FB_BYTES);
     s_fast_count = full ? 0 : s_fast_count + 1;
     s_flushes++;
     s_last_ms = (int)((esp_timer_get_time() - t0) / 1000);
