@@ -45,6 +45,14 @@ static SemaphoreHandle_t s_done;
 /* durante o refresh o BUSY precisa acordar a CPU: sem light sleep até ele cair */
 static esp_pm_lock_handle_t s_pm_lock;
 static bool s_ready;
+/* Refresh rápido DESLIGADO: no vidro ele desbotava mesmo com a imagem anterior
+ * na RAM vermelha, e uma tela que apaga aos poucos não serve para um pager. Tudo
+ * sai pela LUT de fábrica (~1,4 s, com o pisca), que devolve a imagem nítida
+ * sempre. O caminho rápido fica aqui para quando houver bancada. */
+#ifndef EPD_FAST_REFRESH
+#define EPD_FAST_REFRESH 0
+#endif
+
 static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
 /* a última imagem que o vidro aceitou: o refresh rápido precisa dela na RAM
  * "vermelha" (0x26), que é a referência do waveform */
@@ -126,7 +134,7 @@ bool epd_bsp_flush(bool full)
     if (!s_ready) return true;      /* sem painel não há o que pintar */
     int64_t t0 = esp_timer_get_time();
     if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
-    full = full || s_fast_count >= EPD_FAST_BUDGET;
+    full = full || !EPD_FAST_REFRESH || s_fast_count >= EPD_FAST_BUDGET;
 
     if (full && s_fast_lut) {
         esp_lcd_panel_disp_on_off(s_panel, true);     /* volta à LUT da OTP */

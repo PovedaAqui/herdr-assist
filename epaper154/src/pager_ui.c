@@ -507,6 +507,30 @@ static void draw_sleep(void)
     draw_text_center(162, "press PWR to retry", 20, 1);
 }
 
+/* O relógio do topo não conta como mudança: sem refresh rápido, cada minuto
+ * viraria um pisca de ~1,4 s. Ele é repintado quando a tela muda por outro
+ * motivo — e mostra a hora daquele momento. A área é alinhada em bytes
+ * (64 px = 8 bytes) para poder pular com memcmp. */
+#define CLOCK_W_BYTES 8
+
+static bool frame_differs(void)
+{
+    if (!s_have_last) return true;
+    const uint8_t *a = s_last_frame;
+    const uint8_t *b = epd_fb();
+    const int stride = EPD_W / 8;
+    for (int y = 0; y < EPD_H; y++) {
+        const int off = y * stride;
+        if (y < TOP_H) {
+            if (memcmp(a + off + CLOCK_W_BYTES, b + off + CLOCK_W_BYTES,
+                       stride - CLOCK_W_BYTES)) return true;
+        } else if (memcmp(a + off, b + off, stride)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool pager_ui_render(time_t now)
 {
     snapshot_model();
@@ -519,7 +543,7 @@ bool pager_ui_render(time_t now)
     case UI_SLEEP:   draw_sleep(); break;
     default:         draw_main(now); break;
     }
-    bool changed = !s_have_last || memcmp(s_last_frame, epd_fb(), EPD_FB_BYTES) != 0;
+    bool changed = frame_differs();
     if (changed) {
         memcpy(s_last_frame, epd_fb(), EPD_FB_BYTES);
         s_have_last = true;

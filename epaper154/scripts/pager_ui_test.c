@@ -322,6 +322,17 @@ static void test_single_row(void)
     CHECK(pager_ui_focused(NULL, pane, sizeof(pane), NULL, 0) && !strcmp(pane, "p1"),
           "uma linha: de novo, o foco continua nela (não há para onde andar)");
     CHECK(!pager_ui_render(now), "e a tela não redesenha nada");
+
+    /* o relógio sozinho não pisca a tela: com a LUT de fábrica, cada minuto
+     * seria um refresh total de ~1,4 s. O resto da tela tem de estar igual —
+     * por isso a linha aqui é "idle", sem idade para mudar com o tempo */
+    g_n = 0;
+    add("p1", "omp", "solo", "idle", 0);
+    CHECK(pager_ui_render(now), "estado idle: muda");
+    CHECK(!pager_ui_render(now + 60), "só o relógio mudou: nada de refresh");
+    CHECK(!pager_ui_render(now + 120), "e continua quieto nos minutos seguintes");
+    strcpy(g_agents[0].status, "working"); g_agents[0].since = (uint32_t)now - 30; g_gen++;
+    CHECK(pager_ui_render(now + 180), "mudou o conteúdo: aí sim repinta (e o relógio vem junto)");
 }
 
 int main(int argc, char **argv)
