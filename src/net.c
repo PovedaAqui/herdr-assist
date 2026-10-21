@@ -50,7 +50,10 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
         s_up = false;
         /* durante o scan a desconexão é provocada por nós; não reagir */
         if (s_have_creds && !s_scanning) {
-            ESP_LOGW(TAG, "desconectado do Wi-Fi, tentando de novo...");
+            /* o motivo separa "AP sumiu" (200) de "senha" (15): sem ele não dá
+               para saber por que o pager some da rede na bateria */
+            const wifi_event_sta_disconnected_t *d = data;
+            ESP_LOGW(TAG, "desconectado do Wi-Fi (motivo %d), tentando de novo...", d ? d->reason : -1);
             vTaskDelay(pdMS_TO_TICKS(2000));
             esp_wifi_connect();
         }

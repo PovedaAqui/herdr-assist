@@ -482,8 +482,14 @@ void app_main(void)
     board_i2c_init();
     if (rtc_clock_init()) rtc_clock_restore();
 
-    /* light sleep automático entre eventos; o Wi-Fi fica em modem sleep */
-    esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 40, .light_sleep_enable = true };
+    /* SEM light sleep automático por enquanto: com ele o pager em bateria
+     * perde os botões (a interrupção de GPIO não sobrevive ao ciclo de sono) e
+     * a conexão com a ponte cai a cada ~50 s. No USB isso nunca aparecia
+     * porque o CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION suspende o sono enquanto o
+     * cabo está ligado. A escala de frequência (40 MHz ocioso) fica; o rádio
+     * continua em modem sleep. Voltar com light sleep quando houver bancada
+     * para provar o caminho de wake (gpio_wakeup_enable + esp_sleep_gpio). */
+    esp_pm_config_t pm = { .max_freq_mhz = 160, .min_freq_mhz = 40, .light_sleep_enable = false };
     if (esp_pm_configure(&pm) != ESP_OK) ESP_LOGW(TAG, "gerenciador de energia não configurou");
     battery_init();
 
