@@ -309,6 +309,10 @@ static void ui_task(void *arg)
             int mv = battery_read_mv();
             int pct = battery_percent_from_mv(mv);
             pager_ui_set_battery(pct);
+            /* bateria curta: recuar mais entre tentativas de reconexão. O rádio
+               acordando a cada minuto custa caro quando falta carga, e a ponte
+               volta sozinha — só um pouco mais tarde. */
+            herdr_conn_set_retry_cap_ms(pct >= 0 && pct < 20 ? 120000 : 60000);
             low_batt = (pct >= 0 && mv < BATTERY_CUTOFF_MV) ? low_batt + 1 : 0;
             if (low_batt >= 3) {
                 say("BATTERY LOW", "charge the pager over USB-C", "then press PWR");
