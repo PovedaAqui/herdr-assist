@@ -19,6 +19,11 @@ bem.
 > As imagens acima são renderizações do próprio `pager_ui.c` no host
 > (`scripts/pager_ui_test.c`), pixel a pixel o que vai para o vidro.
 
+Sem conexão por **2 minutos**, o pager para de tentar e descansa no avatar — o
+rádio fica parado. Qualquer botão acorda e reconecta na hora:
+
+![Mascote dormindo com OFFLINE e press PWR to retry](docs/images/tela-descanso.png)
+
 > Este diretório é um projeto PlatformIO independente. O firmware do painel
 > continua na raiz do repositório e não é afetado.
 
