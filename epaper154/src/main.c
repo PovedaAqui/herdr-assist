@@ -104,6 +104,12 @@ static void show_now(bool full)
        "keep", sem pisca e sem acinzentar o resto) */
     if (full || what == UI_FRAME_FULL) {
         if (!epd_bsp_flush(true)) pager_ui_invalidate();
+    } else if (what == UI_FRAME_CLOCK || what == UI_FRAME_STRIPS) {
+        /* hora primeiro (é o que se olha), idades depois */
+        bool ok = epd_bsp_flush_area(0, 0, PAGER_CLOCK_W, PAGER_CLOCK_H);
+        if (what == UI_FRAME_STRIPS)
+            ok = epd_bsp_flush_area(PAGER_AGE_X0, PAGER_AGE_Y0, PAGER_AGE_X1, PAGER_AGE_Y1) && ok;
+        if (!ok) pager_ui_invalidate();
     } else if (what == UI_FRAME_PARTIAL) {
         if (!epd_bsp_flush(false)) pager_ui_invalidate();
     }
@@ -401,6 +407,12 @@ static void ui_task(void *arg)
         bool screen_changed = scr != last_screen;
         if (screen_changed || what == UI_FRAME_FULL) {
             if (!epd_bsp_flush(true)) pager_ui_invalidate();
+        } else if (what == UI_FRAME_CLOCK || what == UI_FRAME_STRIPS) {
+            /* hora primeiro (é o que se olha), idades depois */
+            bool ok = epd_bsp_flush_area(0, 0, PAGER_CLOCK_W, PAGER_CLOCK_H);
+            if (what == UI_FRAME_STRIPS)
+                ok = epd_bsp_flush_area(PAGER_AGE_X0, PAGER_AGE_Y0, PAGER_AGE_X1, PAGER_AGE_Y1) && ok;
+            if (!ok) pager_ui_invalidate();
         } else if (what == UI_FRAME_PARTIAL) {
             if (!epd_bsp_flush(false)) pager_ui_invalidate();
         }

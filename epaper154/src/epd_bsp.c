@@ -31,6 +31,10 @@
 
 static const char *TAG = "epd";
 
+/* não existem no header do componente (ele não faz partial window) */
+#define SSD1681_CMD_PARTIAL_IN   0x91
+#define SSD1681_CMD_PARTIAL_OUT  0x92
+
 #ifndef EPD_MIRROR_X
 #define EPD_MIRROR_X false
 #endif
@@ -41,6 +45,7 @@ static const char *TAG = "epd";
 #define EPD_REFRESH_TMO   pdMS_TO_TICKS(6000)
 
 static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_io;   /* para o partial-in/out do relógio */
 static SemaphoreHandle_t s_done;
 /* durante o refresh o BUSY precisa acordar a CPU: sem light sleep até ele cair */
 static esp_pm_lock_handle_t s_pm_lock;
@@ -57,6 +62,9 @@ static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
 /* a última imagem que o vidro aceitou: o refresh rápido precisa dela na RAM
  * "vermelha" (0x26), que é a referência do waveform */
 static uint8_t s_painted[EPD_FB_BYTES];
+/* maior área que o relógio usa (64 x TOP_H); embutido para não alocar */
+static uint8_t s_area_old[512];
+static uint8_t s_area_new[512];
 static int  s_fast_count;
 static int  s_flushes;
 static int  s_last_ms;
@@ -93,6 +101,7 @@ bool epd_bsp_init(void)
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)BOARD_EPD_SPI_HOST,
                                              &io_cfg, &io));
+    s_io = io;
 
     esp_lcd_ssd1681_config_t vendor = {
         .busy_gpio_num = BOARD_EPD_BUSY_PIN,
@@ -129,6 +138,55 @@ bool epd_bsp_init(void)
     return true;
 }
 
+/* Refresco de ÁREA: partial-in (0x91) antes e partial-out (0x92) depois, com a
+ * janela do controlador limitada ao retângulo. É o que o relógio usa: sem isso o
+ * LUT "keep" é aplicado a todos os pixels e o que não mudou vai apagando aos
+ * poucos ("keep previous output"), até o próximo refresh total. O driver não
+ * expõe o partial-in, então os dois comandos vão crus pelo IO. */
+bool epd_bsp_flush_area(int x0, int y0, int x1, int y1)
+{
+    if (!s_ready) return true;
+    const int w = (x1 - x0) / 8, h = y1 - y0;
+    if (w <= 0 || h <= 0 || (size_t)(w * h) > sizeof(s_area_old)) return false;
+
+    int64_t t0 = esp_timer_get_time();
+    if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
+    /* o controlador precisa de folga depois que o BUSY cai: emendando um
+     * segundo update de área na sequência ele era ignorado (BUSY nem subia) */
+    vTaskDelay(pdMS_TO_TICKS(60));
+
+    /* empacota a janela: o draw_bitmap copia len_x*len_y/8 bytes a partir do
+     * ponteiro, então não dá para passar o quadro inteiro */
+    const int stride = EPD_W / 8;
+    for (int y = 0; y < h; y++) {
+        memcpy(s_area_old + y * w, s_painted + (y0 + y) * stride + x0 / 8, w);
+        memcpy(s_area_new + y * w, epd_fb() + (y0 + y) * stride + x0 / 8, w);
+    }
+
+    if (!s_fast_lut) {
+        epaper_panel_set_custom_lut(s_panel, SSD1681_WAVESHARE_1IN54_V2_LUT_FAST_REFRESH_KEEP, 159);
+        s_fast_lut = true;
+    }
+    esp_lcd_panel_io_tx_param(s_io, SSD1681_CMD_PARTIAL_IN, (uint8_t[]){ 0x00 }, 1);
+    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
+    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, s_area_old);
+    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
+    esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, s_area_new);
+    while (xSemaphoreTake(s_done, 0) == pdTRUE) { }   /* drena gives atrasados */
+    epaper_panel_refresh_screen(s_panel);
+    bool ok = xSemaphoreTake(s_done, EPD_REFRESH_TMO) == pdTRUE;
+    esp_lcd_panel_io_tx_param(s_io, SSD1681_CMD_PARTIAL_OUT, NULL, 0);
+
+    if (s_pm_lock) esp_pm_lock_release(s_pm_lock);
+    if (ok) memcpy(s_painted, epd_fb(), EPD_FB_BYTES);
+    s_fast_count = ok ? s_fast_count + 1 : s_fast_count;
+    s_flushes++;
+    s_last_ms = (int)((esp_timer_get_time() - t0) / 1000);
+    ESP_LOGI(TAG, "refresh área (%d,%d)-(%d,%d) em %d ms%s", x0, y0, x1, y1, s_last_ms,
+             ok ? "" : " — NAO PINTou");
+    return ok;
+}
+
 bool epd_bsp_flush(bool full)
 {
     if (!s_ready) return true;      /* sem painel não há o que pintar */
@@ -155,7 +213,7 @@ bool epd_bsp_flush(bool full)
     }
     epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
-    xSemaphoreTake(s_done, 0);                        /* zera um give velho */
+    while (xSemaphoreTake(s_done, 0) == pdTRUE) { }   /* drena gives atrasados */
     epaper_panel_refresh_screen(s_panel);
     bool ok = xSemaphoreTake(s_done, EPD_REFRESH_TMO) == pdTRUE;
     if (!ok) ESP_LOGW(TAG, "refresh sem fim de BUSY em %d ms", (int)pdTICKS_TO_MS(EPD_REFRESH_TMO));

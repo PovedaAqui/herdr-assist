@@ -513,6 +513,39 @@ static void draw_sleep(void)
  * (64 px = 8 bytes) para poder pular com memcmp. */
 #define CLOCK_W_BYTES 8
 
+/* Separa as mudanças que cabem em faixas (hora, idades) das que precisam da
+ * tela inteira. Cada byte que difere é localizado; se algum cair fora das duas
+ * faixas, é parcial de tela inteira. */
+static bool in_strip(int x, int y, int x0, int y0, int x1, int y1)
+{
+    return x >= x0 && x < x1 && y >= y0 && y < y1;
+}
+
+static ui_frame_t what_changed(void)
+{
+    const uint8_t *a = s_last_frame;
+    const uint8_t *b = epd_fb();
+    const int stride = EPD_W / 8;
+    bool clock = false, age = false;
+    for (int y = 0; y < EPD_H; y++) {
+        for (int bx = 0; bx < stride; bx++) {
+            uint8_t d = a[y * stride + bx] ^ b[y * stride + bx];
+            if (!d) continue;
+            for (int bit = 0; bit < 8; bit++) {
+                if (!(d & (0x80 >> bit))) continue;
+                int x = bx * 8 + bit;
+                if (in_strip(x, y, 0, 0, PAGER_CLOCK_W, PAGER_CLOCK_H)) clock = true;
+                else if (in_strip(x, y, PAGER_AGE_X0, PAGER_AGE_Y0, PAGER_AGE_X1, PAGER_AGE_Y1)) age = true;
+                else return UI_FRAME_PARTIAL;
+            }
+        }
+    }
+    if (clock && age) return UI_FRAME_STRIPS;
+    if (clock) return UI_FRAME_CLOCK;
+    if (age) return UI_FRAME_STRIPS;
+    return UI_FRAME_NONE;
+}
+
 ui_frame_t pager_ui_render(time_t now)
 {
     snapshot_model();
@@ -526,8 +559,13 @@ ui_frame_t pager_ui_render(time_t now)
     default:         draw_main(now); break;
     }
     ui_frame_t what = UI_FRAME_NONE;
-    if (!s_have_last) what = UI_FRAME_FULL;
-    else if (memcmp(s_last_frame, epd_fb(), EPD_FB_BYTES)) what = UI_FRAME_PARTIAL;
+    if (!s_have_last) {
+        what = UI_FRAME_FULL;
+    } else if (memcmp(s_last_frame, epd_fb(), EPD_FB_BYTES)) {
+        /* só a hora mudou? então dá para dirigir apenas a caixa dela e deixar
+         * o resto do vidro em paz (ver epd_bsp_flush_area) */
+        what = what_changed();
+    }
     if (what != UI_FRAME_NONE) {
         memcpy(s_last_frame, epd_fb(), EPD_FB_BYTES);
         s_have_last = true;

@@ -329,13 +329,19 @@ static void test_single_row(void)
     g_n = 0;
     add("p1", "omp", "solo", "idle", 0);
     CHECK(pager_ui_render(now), "estado idle: muda");
-    CHECK(pager_ui_render(now + 60) == UI_FRAME_PARTIAL, "só o relógio: refresh parcial (sem pisca)");
-    CHECK(pager_ui_render(now + 120) == UI_FRAME_PARTIAL, "e de novo no minuto seguinte");
+    CHECK(pager_ui_render(now + 60) == UI_FRAME_CLOCK, "só o relógio: refresh só da caixa da hora");
+    CHECK(pager_ui_render(now + 120) == UI_FRAME_CLOCK, "e de novo no minuto seguinte");
+    /* a idade da sessão fica fora da caixa da hora: parcial de tela inteira */
+    strcpy(g_agents[0].status, "working"); g_agents[0].since = (uint32_t)now - 30; g_gen++;
     CHECK(pager_ui_render(now + 180) == UI_FRAME_PARTIAL,
-          "idade de sessão sozinha: parcial");
+          "status mudou o ícone da linha (fora das faixas): parcial");
+    CHECK(pager_ui_render(now + 240) == UI_FRAME_STRIPS,
+          "só a idade andou: refresh das faixas (hora + idades)");
+    CHECK(pager_ui_render(now + 300) == UI_FRAME_STRIPS,
+          "e de novo no minuto seguinte, ainda nas faixas");
     strcpy(g_agents[0].status, "blocked"); g_agents[0].since = 0; g_gen++;
-    CHECK(pager_ui_render(now + 240) == UI_FRAME_PARTIAL,
-          "banda de espera invertida também é parcial (o total só limpa fantasma)");
+    CHECK(pager_ui_render(now + 360) == UI_FRAME_PARTIAL,
+          "banda de espera invertida: parcial de tela inteira");
 }
 
 int main(int argc, char **argv)

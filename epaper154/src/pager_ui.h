@@ -54,9 +54,22 @@ void pager_ui_set_battery(int pct);
  *                      em troca de tela, ver main.c) */
 typedef enum {
     UI_FRAME_NONE = 0,
-    UI_FRAME_PARTIAL = 1,
-    UI_FRAME_FULL = 2,
+    UI_FRAME_CLOCK = 1,     /* só a hora: refresh de área, nada mais é tocado */
+    UI_FRAME_STRIPS = 2,    /* hora + coluna das idades: só as duas faixas */
+    UI_FRAME_PARTIAL = 3,   /* o resto da tela: parcial "keep" */
+    UI_FRAME_FULL = 4,
 } ui_frame_t;
+
+/* retângulo da hora no topo (canto superior esquerdo) */
+#define PAGER_CLOCK_W 64
+#define PAGER_CLOCK_H 20
+/* faixa da direita onde ficam as idades ("30s", "2m"): muda a cada minuto,
+ * então também é refresh de área, senão um agente trabalhando manteria a tela
+ * inteira sendo dirigida a cada minuto */
+#define PAGER_AGE_X0 160
+#define PAGER_AGE_Y0 80
+#define PAGER_AGE_X1 200
+#define PAGER_AGE_Y1 176
 
 ui_frame_t pager_ui_render(time_t now);
 /* o vidro recusou o último quadro: o próximo render devolve true mesmo que a

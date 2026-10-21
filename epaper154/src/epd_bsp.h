@@ -51,6 +51,11 @@ bool epd_bsp_init(void);
  * pedir outro refresh em vez de achar que a tela está atualizada */
 bool epd_bsp_flush(bool full);
 
+/* Refresh de uma área (partial-in/out do controlador): só a janela é dirigida,
+ * então o resto do vidro não é tocado. É o caminho do relógio — o LUT "keep"
+ * aplicado à tela inteira ia apagando justamente o que não mudou. */
+bool epd_bsp_flush_area(int x0, int y0, int x1, int y1);
+
 int epd_bsp_flush_count(void);
 int epd_bsp_last_flush_ms(void);
 
