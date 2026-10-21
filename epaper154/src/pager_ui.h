@@ -44,6 +44,9 @@ void pager_ui_set_battery(int pct);
 
 /* now = 0 quando o relógio ainda não é confiável (mostra --:--). */
 bool pager_ui_render(time_t now);
+/* o vidro recusou o último quadro: o próximo render devolve true mesmo que a
+ * imagem seja igual, para a tela ser reescrita */
+void pager_ui_invalidate(void);
 
 /* Foco: a sessão que o PWR seleciona e o BOOT responde. A lista é a da última
  * renderização (a mesma ordem que está no vidro). */

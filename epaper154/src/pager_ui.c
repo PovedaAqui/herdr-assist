@@ -527,6 +527,8 @@ bool pager_ui_render(time_t now)
     return changed;
 }
 
+void pager_ui_invalidate(void) { s_have_last = false; }
+
 void pager_ui_focus_next(void)
 {
     if (s_row_count == 0) return;

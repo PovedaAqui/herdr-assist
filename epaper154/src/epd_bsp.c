@@ -13,6 +13,8 @@
 
 #include "epd_bsp.h"
 
+#include <string.h>
+
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
@@ -44,6 +46,9 @@ static SemaphoreHandle_t s_done;
 static esp_pm_lock_handle_t s_pm_lock;
 static bool s_ready;
 static bool s_fast_lut;      /* a LUT carregada agora é a rápida? */
+/* a última imagem que o vidro aceitou: o refresh rápido precisa dela na RAM
+ * "vermelha" (0x26), que é a referência do waveform */
+static uint8_t s_painted[EPD_FB_BYTES];
 static int  s_fast_count;
 static int  s_flushes;
 static int  s_last_ms;
@@ -116,9 +121,9 @@ bool epd_bsp_init(void)
     return true;
 }
 
-void epd_bsp_flush(bool full)
+bool epd_bsp_flush(bool full)
 {
-    if (!s_ready) return;
+    if (!s_ready) return true;      /* sem painel não há o que pintar */
     int64_t t0 = esp_timer_get_time();
     if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
     full = full || s_fast_count >= EPD_FAST_BUDGET;
@@ -131,22 +136,30 @@ void epd_bsp_flush(bool full)
         s_fast_lut = true;
     }
 
-    /* só a RAM preta, como o exemplo do componente faz no refresh rápido; se no
-     * vidro o rápido sujar, o próximo passo é escrever a tela anterior na RAM
-     * "vermelha" (0x26), que é a referência do waveform — PENDENTE DE BANCADA */
+    /* Refresh rápido precisa das DUAS imagens: a anterior na RAM "vermelha"
+     * (0x26), que é a referência do waveform, e a nova na preta (0x24). Sem a
+     * anterior o painel é dirigido contra pixels que nunca mudaram e o vidro
+     * vai desbotando a cada rápido — some a tela sem que nada tenha falhado.
+     * No total a LUT de fábrica reescreve tudo, então a vermelha não entra. */
+    if (!full) {
+        epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
+        esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, s_painted);
+    }
     epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
     xSemaphoreTake(s_done, 0);                        /* zera um give velho */
     epaper_panel_refresh_screen(s_panel);
-    if (xSemaphoreTake(s_done, EPD_REFRESH_TMO) != pdTRUE)
-        ESP_LOGW(TAG, "refresh sem fim de BUSY em %d ms", (int)pdTICKS_TO_MS(EPD_REFRESH_TMO));
+    bool ok = xSemaphoreTake(s_done, EPD_REFRESH_TMO) == pdTRUE;
+    if (!ok) ESP_LOGW(TAG, "refresh sem fim de BUSY em %d ms", (int)pdTICKS_TO_MS(EPD_REFRESH_TMO));
 
     if (s_pm_lock) esp_pm_lock_release(s_pm_lock);
+    if (ok) memcpy(s_painted, epd_fb(), EPD_FB_BYTES);
     s_fast_count = full ? 0 : s_fast_count + 1;
     s_flushes++;
     s_last_ms = (int)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "refresh %s em %d ms (rápidos desde o total: %d)", full ? "total" : "rápido",
-             s_last_ms, s_fast_count);
+    ESP_LOGI(TAG, "refresh %s em %d ms (rápidos desde o total: %d)%s", full ? "total" : "rápido",
+             s_last_ms, s_fast_count, ok ? "" : " — NAO PINTou");
+    return ok;
 }
 
 int epd_bsp_flush_count(void) { return s_flushes; }

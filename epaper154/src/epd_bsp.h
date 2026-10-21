@@ -47,7 +47,9 @@ bool epd_bsp_init(void);
  * pedido, e a cada EPD_FAST_BUDGET rápidos. Quem chama só pede quando a tela
  * mudou de verdade. O número é chute até medir no vidro. */
 #define EPD_FAST_BUDGET 30
-void epd_bsp_flush(bool full);
+/* false = o BUSY não caiu: o vidro não aceitou a imagem, e quem chamou tem de
+ * pedir outro refresh em vez de achar que a tela está atualizada */
+bool epd_bsp_flush(bool full);
 
 int epd_bsp_flush_count(void);
 int epd_bsp_last_flush_ms(void);

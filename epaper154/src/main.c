@@ -99,7 +99,8 @@ static bool has_host(void)
 static void show_now(bool full)
 {
     time_t now = rtc_clock_system_valid() ? time(NULL) : 0;
-    if (pager_ui_render(now) || full) epd_bsp_flush(full);
+    bool went = pager_ui_render(now);
+    if ((went || full) && !epd_bsp_flush(full)) pager_ui_invalidate();
 }
 
 static void say(const char *title, const char *l1, const char *l2)
@@ -388,7 +389,9 @@ static void ui_task(void *arg)
             prev_waiting = w;
         }
         last_gen = gen;
-        if (changed) epd_bsp_flush(scr != last_screen);   /* troca de tela = refresh total */
+        /* troca de tela = refresh total; se o vidro recusou, invalida para
+           tentar de novo em vez de achar que a tela está atualizada */
+        if (changed && !epd_bsp_flush(scr != last_screen)) pager_ui_invalidate();
         last_screen = scr;
 
         if (s_sntp_synced && !rtc_saved) rtc_saved = rtc_clock_save();
