@@ -32,12 +32,7 @@
 static const char *TAG = "epd";
 
 /* Comandos que o componente não expõe */
-#define SSD1681_CMD_WRITE_REG_FOR_DISPLAY 0x37
 #define SSD1681_CMD_BORDER_WAVEFORM       0x3C
-#define SSD1681_CMD_END_OPTION            0x3F
-#define SSD1681_CMD_GATE_VOLTAGE          0x03
-#define SSD1681_CMD_SOURCE_VOLTAGE        0x04
-#define SSD1681_CMD_VCOM_REGISTER         0x2C
 #define SSD1681_CMD_MASTER_ACTIVATION     0x20
 #define SSD1681_CMD_UPDATE_CTRL2          0x22
 
@@ -122,35 +117,18 @@ bool epd_bsp_init(void)
     return true;
 }
 
-/* LUT da atualização parcial do driver do fabricante (EPD_1in54_V2.c,
- * WF_PARTIAL_1IN54_0). Não é a do exemplo do componente: 19 bytes diferem, a
- * começar pelo primeiro (0x00,0x40,0x00 contra 0x80,0x48,0x40) — polaridade
- * oposta, e com ela o parcial pinta a tela invertida (fundo preto). Os 6
- * últimos bytes são os parâmetros de 0x3F, 0x03, 0x04 e 0x2C. */
-static const uint8_t LUT_PARTIAL[159] = {
-    0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x00, 0x00, 0x00, 0x02, 0x17, 0x41,
-    0xb0, 0x32, 0x28,
-};
-
-/* Entra no modo parcial como o EPD_1in54_V2_Init_Partial() do fabricante:
- * carrega a LUT da atualização rápida, escreve os 10 bytes do 0x37, o 0x3C=0x80
- * (borda seguindo a LUT) e liga clock/analógico com 0x22=0xC0. Sem esses três
- * registradores o 0xCF não faz atualização diferencial — foi o que fez o vidro
- * desbotar e, no caso da janela 0x91, ficar em branco. */
-static bool s_partial_mode;
-
+/* Receita do driver SSD1683 do ESPHome. O ponto que faltava é o 0x21: o
+ * datasheet (Tab. 7-1) define [7:4] como opção da RAM vermelha — 0000 normal,
+ * 0100 bypass como 0, 1000 INVERSO — e [3:0] igual para a preta. Ou seja, o
+ * inverso é feito HARDWARE: escrever o inverso à mão na 0x26, como eu fazia,
+ * inverte duas vezes e a comparação vira o contrário a cada passo (a tela
+ * trocava de polaridade a cada dois apertos e voltava).
+ *
+ *   0x3C  0x80 parcial / 0x01 total   (borda)
+ *   0x21  0x80 parcial / 0x40 total   (vermelha invertida / bypass)
+ *   0x22  0xFC parcial / 0xF7 total   (0xFC carrega a LUT de fábrica no modo 2)
+ *   RAM   0x24 e 0x26 levam o quadro como está, nos dois modos
+ */
 static bool wait_busy(void)
 {
     const int64_t t0 = esp_timer_get_time();
@@ -160,43 +138,11 @@ static bool wait_busy(void)
     return gpio_get_level(BOARD_EPD_BUSY_PIN) == 0;
 }
 
+static uint8_t s_inverse[EPD_FB_BYTES];
+
 static void epd_cmd(uint8_t cmd, const uint8_t *data, size_t n)
 {
     esp_lcd_panel_io_tx_param(s_io, cmd, data, n);
-}
-
-static void enter_partial_mode(void)
-{
-    if (s_partial_mode) return;
-    /* A LUT do fabricante assume 0=preto; o nosso quadro usa 1=preto. Para o
-     * controlador, "old==new" cai em LUT0 (preto) ou LUT3 (branco) e "mudou"
-     * em LUT1/LUT2 (datasheet, Tab. 6-5). Com a convenção trocada, essas
-     * transições dirigem para o lado errado e a tela inteira vira um negativo.
-     * Trocar LUT0<->LUT1 e LUT2<->LUT3 (12 bytes cada) acerta a polaridade. */
-    static uint8_t lut[159];
-    const int B = 12;
-    for (int i = 0; i < 60; i++) lut[i] = LUT_PARTIAL[i];
-    for (int i = 0; i < B; i++) {
-        lut[0 + i]  = LUT_PARTIAL[12 + i];   /* LUT0 <- LUT1 */
-        lut[12 + i] = LUT_PARTIAL[0 + i];    /* LUT1 <- LUT0 */
-        lut[24 + i] = LUT_PARTIAL[36 + i];   /* LUT2 <- LUT3 */
-        lut[36 + i] = LUT_PARTIAL[24 + i];   /* LUT3 <- LUT2 */
-    }
-    for (int i = 60; i < 159; i++) lut[i] = LUT_PARTIAL[i];
-    epd_cmd(0x32, lut, 153);                      /* LUT do refresh rápido */
-    epd_cmd(SSD1681_CMD_END_OPTION, &lut[153], 1);
-    epd_cmd(SSD1681_CMD_GATE_VOLTAGE, &lut[154], 1);
-    epd_cmd(SSD1681_CMD_SOURCE_VOLTAGE, &lut[155], 3);
-    epd_cmd(SSD1681_CMD_VCOM_REGISTER, &lut[158], 1);
-
-    static const uint8_t reg37[10] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00 };
-    epd_cmd(SSD1681_CMD_WRITE_REG_FOR_DISPLAY, reg37, sizeof(reg37));
-    epd_cmd(SSD1681_CMD_BORDER_WAVEFORM, (uint8_t[]){ 0x80 }, 1);
-
-    epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ 0xC0 }, 1);   /* só liga clock/analógico */
-    epd_cmd(SSD1681_CMD_MASTER_ACTIVATION, NULL, 0);
-    wait_busy();
-    s_partial_mode = true;
 }
 
 bool epd_bsp_flush(bool full)
@@ -206,30 +152,28 @@ bool epd_bsp_flush(bool full)
     if (s_pm_lock) esp_pm_lock_acquire(s_pm_lock);
     full = full || !EPD_FAST_REFRESH || s_fast_count >= EPD_FAST_BUDGET;
 
-    if (full) {
-        if (s_partial_mode) {
-            esp_lcd_panel_disp_on_off(s_panel, true); /* volta à LUT da OTP */
-            s_partial_mode = false;
-        }
-    } else {
-        enter_partial_mode();
-    }
+    epd_cmd(SSD1681_CMD_BORDER_WAVEFORM, (uint8_t[]){ full ? 0x01 : 0x80 }, 1);
+    /* [7:4] = RAM vermelha: 0x80 inverte, 0x40 faz bypass; [3:0] = preta normal */
+    epd_cmd(0x21, (uint8_t[]){ full ? 0x40 : 0x80, 0x00 }, 2);
 
-    /* Como o DisplayPart()/DisplayPartBaseImage() do fabricante: a preta (0x24)
-     * leva sempre a imagem nova; a vermelha (0x26) só é reescrita no refresh
-     * total (ela é a referência do diferencial, e o controlador a atualiza
-     * sozinho ao fim de cada parcial). */
-    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
-    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
-    if (full) {
-        epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
-        esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
+    /* A LUT de fábrica do modo 2 (0xFC, a do parcial) tem polaridade de dados
+     * oposta à do modo 1 (0xF7, a do total): com o quadro como está, o parcial
+     * pinta o negativo e cada passo inverte tudo. Mandamos o quadro invertido
+     * no parcial — o resultado no vidro fica igual ao do total.
+     * Com 0x21=0x80 a vermelha é invertida em hardware, então ela vê o
+     * contrário da preta e todo pixel conta como "mudou" (é o que limpa o
+     * resíduo, sem precisar de refresh total a cada aperto). */
+    const uint8_t *bw = epd_fb();
+    if (!full) {
+        for (int i = 0; i < EPD_FB_BYTES; i++) s_inverse[i] = (uint8_t)~epd_fb()[i];
+        bw = s_inverse;
     }
-    /* 0x0F ("quality mode" do SSD1680/ESPHome) travou a task de UI nesta
-     * unidade: o update não voltava e o pager parava de desenhar. Fica o 0xCF,
-     * que completa sempre; o fantasma do parcial é limpo pelo refresh total
-     * que o EPD_FAST_BUDGET força. */
-    epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ full ? 0xC7 : 0xCF }, 1);
+    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, bw);
+    epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, bw);
+
+    epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ full ? 0xF7 : 0xFC }, 1);
     epd_cmd(SSD1681_CMD_MASTER_ACTIVATION, NULL, 0);
     bool ok = wait_busy();
     if (!ok) ESP_LOGW(TAG, "refresh sem fim de BUSY (6 s)");

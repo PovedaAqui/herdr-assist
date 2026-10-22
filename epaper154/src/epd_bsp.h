@@ -42,11 +42,11 @@ void epd_fb_invert_rect(int x, int y, int w, int h);
  * respondeu (BUSY preso). */
 bool epd_bsp_init(void);
 
-/* Política de refresh: rápido (LUT de refresh rápido, sem o pisca) é o
+/* Política de refresh: parcial (LUT de fábrica modo 2, sem o pisca) é o
  * caminho normal; total (LUT de fábrica, pisca, limpa o ghosting) no boot, a
  * pedido, e a cada EPD_FAST_BUDGET rápidos. Quem chama só pede quando a tela
  * mudou de verdade. O número é chute até medir no vidro. */
-#define EPD_FAST_BUDGET 8
+#define EPD_FAST_BUDGET 120
 /* false = o BUSY não caiu: o vidro não aceitou a imagem, e quem chamou tem de
  * pedir outro refresh em vez de achar que a tela está atualizada */
 bool epd_bsp_flush(bool full);
