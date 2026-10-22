@@ -225,6 +225,10 @@ bool epd_bsp_flush(bool full)
         epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
         esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, epd_fb());
     }
+    /* 0x0F ("quality mode" do SSD1680/ESPHome) travou a task de UI nesta
+     * unidade: o update não voltava e o pager parava de desenhar. Fica o 0xCF,
+     * que completa sempre; o fantasma do parcial é limpo pelo refresh total
+     * que o EPD_FAST_BUDGET força. */
     epd_cmd(SSD1681_CMD_UPDATE_CTRL2, (uint8_t[]){ full ? 0xC7 : 0xCF }, 1);
     epd_cmd(SSD1681_CMD_MASTER_ACTIVATION, NULL, 0);
     bool ok = wait_busy();
