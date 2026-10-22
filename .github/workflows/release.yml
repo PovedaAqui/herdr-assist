@@ -10,8 +10,8 @@
 # a fixed name lets the panel discover the newest version for OTA (see
 # fw_update.c).
 #
-# Trem único de versão: a mesma tag vX.Y.Z builda e publica o painel de 3,5" E
-# o Cardputer, em jobs paralelos. O manifest.json de nome fixo é PARA SEMPRE o
+# Trem único de versão: a mesma tag vX.Y.Z builda e publica o painel de 3,5", o
+# Cardputer e o e-paper (V2 e V1), em jobs paralelos. O manifest.json de nome fixo é PARA SEMPRE o
 # do painel — os painéis em campo fazem GET em releases/latest/download/
 # manifest.json e flashariam sem reclamar qualquer imagem S3 apontada ali
 # (o rollback salvaria, mas é incidente). O Cardputer tem o seu
@@ -183,8 +183,68 @@ jobs:
           name: dist-cardputer
           path: dist/
 
+  build-epaper154:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            ~/.platformio/packages
+            ~/.platformio/platforms
+          key: pio-epaper154-${{ runner.os }}-${{ hashFiles('epaper154/platformio.ini') }}
+          restore-keys: pio-epaper154-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # O CMakeLists.txt do device lê ../version.txt para o PROJECT_VER (o
+      # esp_app_desc que o fw_update compara com o manifest), e o
+      # sync_shared.py para o HERDR_ASSIST_VERSION da tela.
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "${GITHUB_REF_NAME}" > version.txt
+
+      - name: Build
+        run: pio run -d epaper154
+
+      # Duas revisões da placa (V2 = PSRAM octal, V1 = quad), um par de
+      # imagens e um manifest para cada. Mesmo layout do painel em 4MB
+      # (epaper154/partitions.csv: otadata em 0xD000, app em 0x10000).
+      - name: Merge install images and write manifests
+        run: |
+          mkdir -p dist
+          for ENV in epaper154 epaper154-v1; do
+            BUILD=epaper154/.pio/build/$ENV
+            NAME="herdr-assist-${ENV}-${GITHUB_REF_NAME}"
+            (cd epaper154 && pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 merge_bin \
+              -o "../dist/${NAME}-install.bin" \
+              --flash_mode dio --flash_freq 80m --flash_size 4MB \
+              0x0     ".pio/build/$ENV/bootloader.bin" \
+              0x8000  ".pio/build/$ENV/partitions.bin" \
+              0x10000 ".pio/build/$ENV/firmware.bin")
+            cp "$BUILD/firmware.bin" "dist/${NAME}-update.bin"
+            SIZE=$(stat -c%s "$BUILD/firmware.bin")
+            SHA=$(sha256sum "$BUILD/firmware.bin" | cut -d' ' -f1)
+            printf '{"device":"%s","version":"%s","url":"https://github.com/walcew/herdr-assist/releases/download/%s/%s-update.bin","size":%s,"sha256":"%s"}\n' \
+              "$ENV" "$GITHUB_REF_NAME" "$GITHUB_REF_NAME" "$NAME" "$SIZE" "$SHA" > "dist/manifest-${ENV}.json"
+            cat "dist/manifest-${ENV}.json"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-epaper154
+          path: dist/
+
   publish:
-    needs: [build-panel, build-cardputer]
+    needs: [build-panel, build-cardputer, build-epaper154]
     if: startsWith(github.ref, 'refs/tags/')   # dispatch é dry-run de verdade
     runs-on: ubuntu-latest
     steps:
@@ -204,6 +264,18 @@ jobs:
             *"/herdr-assist-${GITHUB_REF_NAME}-update.bin") ;;
             *) echo "manifest.json aponta para asset errado: $URL"; exit 1;;
           esac
+
+      # Cada revisão do e-paper lê só o próprio manifest; um manifest trocado
+      # (V1 apontando para a imagem da V2) faria a placa subir sem PSRAM.
+      - name: Guard epaper154 manifests
+        run: |
+          for ENV in epaper154 epaper154-v1; do
+            URL=$(jq -r .url "dist/manifest-${ENV}.json")
+            case "$URL" in
+              *"/herdr-assist-${ENV}-${GITHUB_REF_NAME}-update.bin") ;;
+              *) echo "manifest-${ENV}.json aponta para asset errado: $URL"; exit 1;;
+            esac
+          done
 
       - name: Checksums
         run: cd dist && sha256sum *.bin > SHA256SUMS && cat SHA256SUMS
@@ -253,15 +325,25 @@ jobs:
           esptool.py --chip esp32s3 write_flash 0x0 herdr-assist-cardputer-VERSION-install.bin
           ```
 
+          ## Waveshare ESP32-S3-ePaper-1.54 (pager)
+
+          `herdr-assist-epaper154-*` is for the V2 board (8 MB, octal PSRAM),
+          `herdr-assist-epaper154-v1-*` for the V1. Updates arrive OTA like the
+          panel's; first install over USB:
+
+          ```sh
+          esptool.py --chip esp32s3 write_flash 0x0 herdr-assist-epaper154-VERSION-install.bin
+          ```
+
           Full step-by-step, including the Herdr plugin, in the [README](https://github.com/walcew/herdr-assist#readme).
           EOF
           sed -i "s/VERSION/${GITHUB_REF_NAME}/g" notes.md
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.bin dist/SHA256SUMS dist/manifest.json dist/manifest-cardputer.json --clobber
+            gh release upload "$GITHUB_REF_NAME" dist/*.bin dist/SHA256SUMS dist/manifest.json dist/manifest-cardputer.json dist/manifest-epaper154.json dist/manifest-epaper154-v1.json --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
               --title "$GITHUB_REF_NAME" \
               --notes-file notes.md \
               --generate-notes \
-              dist/*.bin dist/SHA256SUMS dist/manifest.json dist/manifest-cardputer.json
+              dist/*.bin dist/SHA256SUMS dist/manifest.json dist/manifest-cardputer.json dist/manifest-epaper154.json dist/manifest-epaper154-v1.json
           fi

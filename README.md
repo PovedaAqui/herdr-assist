@@ -90,6 +90,9 @@ It also checks every minute whether the code on disk is still the code it is run
 covers a `herdr plugin install` done by hand, whose companion step (`restart-bridge`) is
 the one everybody forgets — within a minute the bridge notices and comes back on its own.
 
+Running, restarting and troubleshooting the bridge by hand — where the token, `env` and
+logs live, and the firewall rules — is in [`plugin/README.md`](plugin/README.md).
+
 To turn it off, put `AUTO_UPDATE=0` on a line of the `env` file in the config directory. A
 **linked** checkout is never reinstalled over: there, `git pull` is what updates it. To
 hack on the plugin, `git clone` the repo and `herdr plugin link herdr-assist/plugin`.
@@ -247,6 +250,20 @@ allowlisted keys alone. See [`cardputer/README.md`](cardputer/README.md).
 |:---:|:---:|:---:|
 
 🎬 [Watch it running](https://youtube.com/shorts/AlCFoE3ng9Y)
+
+### Other boards: Waveshare ESP32-S3-ePaper-1.54
+
+`epaper154/` holds a **pager** for the Waveshare ESP32-S3-ePaper-1.54 (200×200
+black-and-white e-paper, two buttons, a speaker). It does one thing: shows which
+agent is waiting, chimes the moment one blocks, and answers it with a button —
+PWR picks the session (and focuses it in Herdr), BOOT sends Enter. Same bridge,
+same pairing, same OTA; the Wi-Fi is set up from a phone through the pager's own
+access point, since it has no keyboard or touch. ESP-IDF like the panel, so it
+shares the protocol, Wi-Fi, pairing and update modules with it. See
+[`epaper154/README.md`](epaper154/README.md).
+
+| ![Someone waiting](epaper154/docs/images/tela-esperando.png) | ![All clear](epaper154/docs/images/tela-tudo-ok.png) | ![Pairing](epaper154/docs/images/tela-pareamento.png) |
+|:---:|:---:|:---:|
 
 ## Architecture
 

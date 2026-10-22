@@ -1,0 +1,8 @@
+# gerado pelo sync_shared.py a cada build (originais em ../src)
+src/shared/
+# saídas do build e do component manager
+/.pio/
+/managed_components/
+/dependencies.lock
+/sdkconfig.epaper154
+/sdkconfig.epaper154-v1

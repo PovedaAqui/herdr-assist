@@ -44,6 +44,17 @@ esp_err_t herdr_conn_start(void);
  */
 const char *herdr_conn_bridge_version(int host);
 
+/* Teto do backoff de reconexão, em ms (padrão 60 s). Suba quando a bateria
+   estiver curta: cada tentativa acorda o rádio, e num device a bateria isso
+   custa mais do que a latência de reconectar um ou dois minutos depois. */
+void herdr_conn_set_retry_cap_ms(uint32_t ms);
+
+/* Suspende as tentativas (bateria) e só volta com herdr_conn_wake().
+   Usado pela tela de descanso: parado, nada acorda o rádio até alguém
+   apertar um botão. */
+void herdr_conn_suspend(bool on);
+void herdr_conn_wake(void);
+
 /* Comandos painel→ponte, roteados pelo índice do host em panel_cfg.
    Retornam ESP_FAIL se o host não estiver conectado. */
 /* cols/rows são a geometria da tela do painel: enquanto ele estiver lendo este

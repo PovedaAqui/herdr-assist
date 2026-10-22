@@ -1,7 +1,10 @@
 #include "herdr_conn.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -41,6 +44,20 @@ static const char *TAG = "herdr_conn";
    que o ping saia no prazo, já que com push o silêncio é o estado normal. */
 #define RECV_TIMEOUT_S  5
 #define RECONNECT_MS    3000
+/* Teto de uma tentativa de conexão. connect() bloqueante fica preso no
+   retry de SYN do kernel (~2 min) quando o endereço descarta em vez de
+   recusar — máquina desligada atrás de firewall, IP que saiu da rede. Nesse
+   tempo a task não tenta mais nada, não faz ping e nem percebe a ponte
+   voltar. 5 s é folgado para uma LAN. */
+#define CONNECT_TIMEOUT_S 5
+/* Teto do backoff de conexão. Sem ele, ponte fora do ar = uma tentativa a
+   cada 3 s para sempre, cada uma acordando o rádio — num device a bateria
+   isso é o gasto dominante, e descobrir a ponte 1 min depois custa pouco. */
+#define RETRY_CAP_MS    60000
+/* A espera pelo Wi-Fi também recua: 1 s para sempre é pior que 30 s. */
+#define WIFI_POLL_MIN_MS 1000
+#define WIFI_POLL_MAX_MS 30000
+#define FAILS_MAX        12       /* saturação dos contadores (uint8_t) */
 
 /* Descoberta por broadcast (só slots auto): janela curta de probe+respostas.
    O reenvio repete o nonce — a ponte deduplica em 300ms, o reenvio sai a 400.
@@ -69,6 +86,9 @@ typedef struct {
     bool addr_ok;              /* cfg.host/port em RAM valem (descobertos) */
     bool token_shared;         /* outro slot habilitado tem o mesmo token */
     uint8_t disc_fails;        /* falhas seguidas de descoberta (backoff) */
+    uint8_t conn_fails;        /* falhas seguidas de conexão (backoff) */
+    uint8_t wifi_fails;        /* esperas seguidas sem Wi-Fi (backoff) */
+    TaskHandle_t task;         /* para o botão acordar o backoff na hora */
     char bridge_ver[16];       /* versão que a ponte anunciou no handshake */
 } conn_slot_t;
 
@@ -473,9 +493,33 @@ static int connect_bridge(const panel_host_t *hc)
         return -1;
     }
     int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock >= 0 && connect(sock, res->ai_addr, res->ai_addrlen) != 0) {
-        close(sock);
-        sock = -1;
+    if (sock >= 0) {
+        /* connect não bloqueante + select: uma tentativa nunca passa de
+           CONNECT_TIMEOUT_S, então o backoff é quem manda no ritmo */
+        int flags = fcntl(sock, F_GETFL, 0);
+        fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+        int rc = connect(sock, res->ai_addr, res->ai_addrlen);
+        if (rc != 0 && errno == EINPROGRESS) {
+            fd_set wf;
+            FD_ZERO(&wf);
+            FD_SET(sock, &wf);
+            struct timeval tv = { .tv_sec = CONNECT_TIMEOUT_S, .tv_usec = 0 };
+            rc = select(sock + 1, NULL, &wf, NULL, &tv);
+            if (rc > 0) {
+                int err = 0;
+                socklen_t len = sizeof(err);
+                rc = (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &len) == 0 && err == 0)
+                     ? 0 : -1;
+            } else {
+                rc = -1;                 /* timeout ou select falhou */
+            }
+        }
+        if (rc == 0) {
+            fcntl(sock, F_SETFL, flags);  /* o recv usa SO_RCVTIMEO */
+        } else {
+            close(sock);
+            sock = -1;
+        }
     }
     freeaddrinfo(res);
     if (sock < 0) {
@@ -603,25 +647,89 @@ static bool discover_slot(conn_slot_t *s)
     return found;
 }
 
+static uint32_t s_retry_cap_ms = RETRY_CAP_MS;
+static volatile bool s_suspended;   /* dormindo na tela de avatar */
+
+void herdr_conn_set_retry_cap_ms(uint32_t ms)
+{
+    s_retry_cap_ms = ms < RECONNECT_MS ? RECONNECT_MS : ms;
+}
+
+/* Acorda as tasks do delay em que estiverem: sem isso um suspend/wake só seria
+   notado no fim do backoff, que pode ser 60 s. */
+static void notify_slots(void)
+{
+    for (int i = 0; i < CFG_MAX_HOSTS; i++) {
+        if (s_slots[i].used && s_slots[i].task) {
+            xTaskNotifyGive(s_slots[i].task);
+        }
+    }
+}
+
+void herdr_conn_suspend(bool on)
+{
+    s_suspended = on;
+    notify_slots();
+}
+
+void herdr_conn_wake(void)
+{
+    s_suspended = false;
+    notify_slots();
+}
+
+/* base dobrando a cada falha, com teto. */
+static uint32_t backoff_ms(uint8_t fails, uint32_t base, uint32_t cap)
+{
+    uint32_t d = base;
+    for (uint8_t i = 0; i < fails && d < cap; i++) {
+        d <<= 1;
+    }
+    return d > cap ? cap : d;
+}
+
 static void conn_task(void *arg)
 {
     conn_slot_t *s = arg;
+    s->task = xTaskGetCurrentTaskHandle();
     while (true) {
+        if (s_suspended) {
+            /* tela de descanso: nada de rádio até um botão */
+            herdr_model_set_conn(s->idx, HERDR_CONN_OFFLINE);
+            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+            s->conn_fails = 0;
+            s->disc_fails = 0;
+            s->addr_ok = false;
+        }
         while (!net_wifi_is_up()) {
             herdr_model_set_conn(s->idx, HERDR_CONN_OFFLINE);
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(backoff_ms(s->wifi_fails,
+                            WIFI_POLL_MIN_MS, WIFI_POLL_MAX_MS)));
+            if (s->wifi_fails < FAILS_MAX) {
+                s->wifi_fails++;      /* sem Wi-Fi: não adianta acordar de 1 em 1 s */
+            }
         }
+        s->wifi_fails = 0;
         herdr_model_set_conn(s->idx, HERDR_CONN_CONNECTING);
         if (s->auto_mode && !s->addr_ok) {
             if (discover_slot(s)) {
                 s->addr_ok = true;
                 s->disc_fails = 0;
             } else {
-                if (s->disc_fails < DISC_FAST_FAILS) {
+                if (s->disc_fails < FAILS_MAX) {
                     s->disc_fails++;
                 }
-                vTaskDelay(pdMS_TO_TICKS(s->disc_fails >= DISC_FAST_FAILS
-                                         ? DISC_SLOW_MS : RECONNECT_MS));
+                uint32_t d = s->disc_fails >= DISC_FAST_FAILS
+                             ? backoff_ms((uint8_t)(s->disc_fails - DISC_FAST_FAILS),
+                                          DISC_SLOW_MS, s_retry_cap_ms)
+                             : RECONNECT_MS;
+                /* sem isto o recuo é invisível justamente quando importa: com
+                   slot auto a falha acontece na descoberta, antes de conectar */
+                if (s->disc_fails == DISC_FAST_FAILS || s->disc_fails == FAILS_MAX) {
+                    ESP_LOGW(TAG, "[%s] %u sondas sem resposta; recuando para %lums",
+                             s->label, s->disc_fails, (unsigned long)d);
+                }
+                ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(d));
                 continue;
             }
         }
@@ -634,7 +742,15 @@ static void conn_task(void *arg)
             if (s->auto_mode) {
                 s->addr_ok = false;
             }
-            vTaskDelay(pdMS_TO_TICKS(RECONNECT_MS));
+            uint32_t d = backoff_ms(s->conn_fails, RECONNECT_MS, s_retry_cap_ms);
+            if (s->conn_fails < FAILS_MAX) {
+                s->conn_fails++;
+            }
+            if (s->conn_fails == 5 || s->conn_fails == FAILS_MAX) {
+                ESP_LOGW(TAG, "[%s] %u tentativas sem conexão; recuando para %lums",
+                         s->label, s->conn_fails, (unsigned long)d);
+            }
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(d));
             continue;
         }
         xSemaphoreTake(s->tx_mutex, portMAX_DELAY);
@@ -654,10 +770,16 @@ static void conn_task(void *arg)
             s->sock = -1;
             xSemaphoreGive(s->tx_mutex);
             close(sock);
-            vTaskDelay(pdMS_TO_TICKS(RECONNECT_MS));
+            if (s->conn_fails < FAILS_MAX) {
+                s->conn_fails++;
+            }
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(backoff_ms(s->conn_fails, RECONNECT_MS,
+                                                             s_retry_cap_ms)));
             continue;
         }
 
+        s->conn_fails = 0;         /* conectou: o próximo tropeço recomeça de 3 s */
+        s->disc_fails = 0;
         herdr_model_set_conn(s->idx, HERDR_CONN_ONLINE);
         ESP_LOGI(TAG, "[%s] conectado (heap livre: %u)", s->label,
                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
