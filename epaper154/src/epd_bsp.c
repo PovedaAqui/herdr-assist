@@ -168,7 +168,21 @@ static void epd_cmd(uint8_t cmd, const uint8_t *data, size_t n)
 static void enter_partial_mode(void)
 {
     if (s_partial_mode) return;
-    const uint8_t *lut = LUT_PARTIAL;
+    /* A LUT do fabricante assume 0=preto; o nosso quadro usa 1=preto. Para o
+     * controlador, "old==new" cai em LUT0 (preto) ou LUT3 (branco) e "mudou"
+     * em LUT1/LUT2 (datasheet, Tab. 6-5). Com a convenção trocada, essas
+     * transições dirigem para o lado errado e a tela inteira vira um negativo.
+     * Trocar LUT0<->LUT1 e LUT2<->LUT3 (12 bytes cada) acerta a polaridade. */
+    static uint8_t lut[159];
+    const int B = 12;
+    for (int i = 0; i < 60; i++) lut[i] = LUT_PARTIAL[i];
+    for (int i = 0; i < B; i++) {
+        lut[0 + i]  = LUT_PARTIAL[12 + i];   /* LUT0 <- LUT1 */
+        lut[12 + i] = LUT_PARTIAL[0 + i];    /* LUT1 <- LUT0 */
+        lut[24 + i] = LUT_PARTIAL[36 + i];   /* LUT2 <- LUT3 */
+        lut[36 + i] = LUT_PARTIAL[24 + i];   /* LUT3 <- LUT2 */
+    }
+    for (int i = 60; i < 159; i++) lut[i] = LUT_PARTIAL[i];
     epd_cmd(0x32, lut, 153);                      /* LUT do refresh rápido */
     epd_cmd(SSD1681_CMD_END_OPTION, &lut[153], 1);
     epd_cmd(SSD1681_CMD_GATE_VOLTAGE, &lut[154], 1);
