@@ -153,8 +153,10 @@ bool epd_bsp_flush(bool full)
     full = full || !EPD_FAST_REFRESH || s_fast_count >= EPD_FAST_BUDGET;
 
     epd_cmd(SSD1681_CMD_BORDER_WAVEFORM, (uint8_t[]){ full ? 0x01 : 0x80 }, 1);
-    /* [7:4] = RAM vermelha: 0x80 inverte, 0x40 faz bypass; [3:0] = preta normal */
-    epd_cmd(0x21, (uint8_t[]){ full ? 0x40 : 0x80, 0x00 }, 2);
+    /* [7:4] = RAM vermelha invertida nos dois modos: assim o par
+     * (vermelha, preta) sempre difere em todo pixel — o diferencial dirige o
+     * quadro inteiro e não sobra resíduo, no parcial e no total */
+    epd_cmd(0x21, (uint8_t[]){ 0x80, 0x00 }, 2);
 
     /* A LUT de fábrica do modo 2 (0xFC, a do parcial) tem polaridade de dados
      * oposta à do modo 1 (0xF7, a do total): com o quadro como está, o parcial
@@ -163,11 +165,10 @@ bool epd_bsp_flush(bool full)
      * Com 0x21=0x80 a vermelha é invertida em hardware, então ela vê o
      * contrário da preta e todo pixel conta como "mudou" (é o que limpa o
      * resíduo, sem precisar de refresh total a cada aperto). */
-    const uint8_t *bw = epd_fb();
-    if (!full) {
-        for (int i = 0; i < EPD_FB_BYTES; i++) s_inverse[i] = (uint8_t)~epd_fb()[i];
-        bw = s_inverse;
-    }
+    /* o painel lê os dados ao contrário da nossa convenção (1=preto): vale
+     * para as duas LUTs de fábrica, então a inversão vai nos dois modos */
+    for (int i = 0; i < EPD_FB_BYTES; i++) s_inverse[i] = (uint8_t)~epd_fb()[i];
+    const uint8_t *bw = s_inverse;
     epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_BLACK);
     esp_lcd_panel_draw_bitmap(s_panel, 0, 0, EPD_W, EPD_H, bw);
     epaper_panel_set_bitmap_color(s_panel, SSD1681_EPAPER_BITMAP_RED);
