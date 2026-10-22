@@ -196,7 +196,9 @@ static void fmt_age(time_t now, uint32_t since, char *out, size_t n)
     out[0] = '\0';
     if (!now || !since || (time_t)since > now) return;
     long s = (long)(now - since);
-    if (s < 60) snprintf(out, n, "%lds", s);
+    /* nada de segundos: no e-paper cada segundo viraria um refresh (378 ms e
+     * um passo de drift) sem informação nenhuma — o pager não é cronômetro */
+    if (s < 60) snprintf(out, n, "<1m");
     else if (s < 3600) snprintf(out, n, "%ldm", s / 60);
     else snprintf(out, n, "%ldh", s / 3600);
 }

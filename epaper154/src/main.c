@@ -104,6 +104,7 @@ static void show_now(bool full)
     /* total para conteúdo (LUT de fábrica, nítido), parcial para a hora (LUT
        "keep", sem pisca e sem acinzentar o resto) */
     if (full || what == UI_FRAME_FULL) {
+        ESP_LOGI(TAG, "refresh total: show_now(%d) what=%d", (int)full, (int)what);
         if (!epd_bsp_flush(true)) pager_ui_invalidate();
     } else if (what != UI_FRAME_NONE) {
         if (!epd_bsp_flush(false)) pager_ui_invalidate();
@@ -401,6 +402,8 @@ static void ui_task(void *arg)
            tela está atualizada */
         bool screen_changed = scr != last_screen;
         if (screen_changed || what == UI_FRAME_FULL) {
+            ESP_LOGI(TAG, "refresh total: tela=%d->%d what=%d invalidado=%d",
+                     (int)last_screen, (int)scr, (int)what, (int)(what == UI_FRAME_FULL));
             if (!epd_bsp_flush(true)) pager_ui_invalidate();
         } else if (what != UI_FRAME_NONE) {
             if (!epd_bsp_flush(false)) pager_ui_invalidate();
